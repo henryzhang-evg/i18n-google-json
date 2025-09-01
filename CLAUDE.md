@@ -5,6 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## General Guidelines
 
 - **TDD**: Follow Test-Driven Development (TDD) principles. Write tests before implementing features to ensure functionality and reliability. ALWAYS write tests for new features and bug fixes.
+- **TDD Bug Fixing Workflow**: When fixing bugs, ALWAYS follow the strict Red-Green-Refactor cycle:
+  1. **Red Phase**: Write a failing test case that reproduces the exact bug behavior
+  2. **Green Phase**: Write the minimal code necessary to make the test pass
+  3. **Refactor Phase**: Clean up and optimize the code while keeping all tests passing
+  4. Never fix bugs without first having a test that demonstrates the problem
 - **Code Quality**: Ensure that the code is well-structured, modular, and follows best practices for readability and maintainability.  
   - ALWAYS make sure each file has a limit of 400 lines of code to ensure readability and maintainability.
   - ALWAYS use typing and eliminate the typing errors and ensure that the code is free of linting issues.

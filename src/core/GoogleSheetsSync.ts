@@ -1,105 +1,26 @@
-import { google } from "googleapis";
 import type { I18nConfig } from "../types";
 import type { CompleteTranslationRecord } from "./TranslationManager";
-import { I18nError, I18nErrorType, ErrorHandler } from "../errors/I18nError";
 import { Logger } from "../utils/StringUtils";
 import { KeyFormat } from "../utils/KeyFormat";
+import { GoogleSheetsClient, SheetData } from "../utils/GoogleSheetsClient";
 
 export class GoogleSheetsSync {
-  private googleSheets: any;
-  private isInitialized: boolean = false;
-  private initPromise: Promise<void>;
+  private sheetsClient: GoogleSheetsClient;
 
   constructor(private config: I18nConfig) {
-    this.initPromise = this.initGoogleSheets();
+    // 使用统一的 Google Sheets 客户端
+    this.sheetsClient = new GoogleSheetsClient({
+      keyFile: config.keyFile,
+      languages: config.languages,
+    });
   }
 
-  /**
-   * 确保初始化完成
-   */
-  private async ensureInitialized(): Promise<void> {
-    await this.initPromise;
-  }
-
-  /**
-   * 初始化 Google Sheets API
-   */
-  private async initGoogleSheets(): Promise<void> {
-    try {
-      const auth = new google.auth.GoogleAuth({
-        keyFile: this.config.keyFile,
-        scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-      });
-
-      const authClient = await auth.getClient();
-      this.googleSheets = google.sheets({
-        version: "v4",
-        auth: authClient as any,
-      });
-
-      this.isInitialized = true;
-      Logger.info("✅ Google Sheets API 初始化成功");
-    } catch (error) {
-      Logger.warn("⚠️ Google Sheets API 初始化失败，将使用模拟模式:", error);
-      this.isInitialized = false;
-      // 在测试环境中提供模拟实现
-      this.googleSheets = {
-        spreadsheets: {
-          values: {
-            get: async () => ({ data: { values: [] } }),
-            update: async () => ({}),
-          },
-          get: async () => ({
-            data: {
-              sheets: [
-                {
-                  properties: {
-                    title: this.config.sheetName,
-                    gridProperties: {
-                      columnCount: Math.max(
-                        this.config.languages.length + 1,
-                        26
-                      ),
-                      rowCount: 1000,
-                    },
-                  },
-                },
-              ],
-            },
-          }),
-        },
-      };
-    }
-  }
-
-  /**
-   * 计算动态范围字符串
-   * @param columnCount 列数
-   * @param rowCount 行数
-   * @returns 格式化的范围字符串，如 "A1:C100"
-   */
-  private calculateRange(columnCount: number, rowCount: number = 1000): string {
-    // 将列数转换为Excel列标识符 (A, B, C, ..., Z, AA, AB, ...)
-    const getColumnLetter = (index: number): string => {
-      let letter = "";
-      while (index >= 0) {
-        letter = String.fromCharCode(65 + (index % 26)) + letter;
-        index = Math.floor(index / 26) - 1;
-      }
-      return letter;
-    };
-
-    const lastColumn = getColumnLetter(columnCount - 1);
-    return `A1:${lastColumn}${rowCount}`;
-  }
 
   /**
    * 从 Google Sheets 同步 CompleteTranslationRecord
    */
   public async syncCompleteRecordFromSheet(): Promise<CompleteTranslationRecord> {
-    await this.ensureInitialized();
-
-    if (!this.isInitialized) {
+    if (!this.sheetsClient.isReady()) {
       Logger.info("🔄 Google Sheets 未初始化，返回空翻译");
       return {};
     }
@@ -112,13 +33,13 @@ export class GoogleSheetsSync {
         `🔍 使用配置的固定范围 ${readRange} 读取数据以避免过滤器干扰`
       );
 
-      const response = await this.googleSheets.spreadsheets.values.get({
-        spreadsheetId: this.config.spreadsheetId,
-        range: `${this.config.sheetName}!${readRange}`,
-      });
+      const sheetData: SheetData = await this.sheetsClient.readSheet(
+        this.config.spreadsheetId,
+        `${this.config.sheetName}!${readRange}`
+      );
 
-      const rows = response.data.values || [];
-      const headers = rows[0] || [];
+      const rows = sheetData.values;
+      const headers = sheetData.headers;
       const langIndices = new Map<string, number>();
       const completeRecord: CompleteTranslationRecord = {};
 
@@ -306,9 +227,7 @@ export class GoogleSheetsSync {
     completeRecord: CompleteTranslationRecord,
     deletedKeys: string[] = []
   ): Promise<void> {
-    await this.ensureInitialized(); // 确保初始化完成
-
-    if (!this.isInitialized) {
+    if (!this.sheetsClient.isReady()) {
       Logger.info("🔄 Google Sheets 未初始化，跳过同步");
       return;
     }
@@ -372,7 +291,7 @@ export class GoogleSheetsSync {
       });
 
       // 计算动态范围
-      const dynamicRange = this.calculateRange(headers.length, 10000);
+      const dynamicRange = this.sheetsClient.calculateRange(headers.length, 10000);
 
       // 如果数据行数不足 10000，用空白行填充
       const maxRows = this.config.sheetsMaxRows || 10000;
@@ -393,12 +312,11 @@ export class GoogleSheetsSync {
       }
 
       // 更新 Google Sheets
-      await this.googleSheets.spreadsheets.values.update({
-        spreadsheetId: this.config.spreadsheetId,
-        range: `${this.config.sheetName}!${dynamicRange}`,
-        valueInputOption: "RAW",
-        resource: { values },
-      });
+      await this.sheetsClient.writeSheet(
+        this.config.spreadsheetId,
+        `${this.config.sheetName}!${dynamicRange}`,
+        values
+      );
 
       Logger.info(
         `✅ 成功同步 ${
@@ -406,7 +324,8 @@ export class GoogleSheetsSync {
         } 条翻译到 Google Sheets (包含mark字段，已合并远端数据)`
       );
     } catch (error) {
-      this.handleSyncError(error, "向Google Sheets同步CompleteRecord");
+      Logger.error("❌ 向Google Sheets同步CompleteRecord失败:", error);
+      throw error; // GoogleSheetsClient 已经处理了详细的错误分类，这里直接重新抛出
     }
   }
 
@@ -437,39 +356,4 @@ export class GoogleSheetsSync {
     return modulePath;
   }
 
-  /**
-   * 处理同步错误
-   */
-  private handleSyncError(error: any, operation: string): void {
-    if (
-      (error as any).code === "ENOTFOUND" ||
-      (error as any).code === "ECONNREFUSED"
-    ) {
-      throw ErrorHandler.createNetworkError(operation, error as Error);
-    } else if ((error as any).code === 401 || (error as any).code === 403) {
-      throw new I18nError(
-        I18nErrorType.AUTHENTICATION_ERROR,
-        "Google Sheets API 认证失败",
-        { originalError: error },
-        [
-          "检查服务账号密钥文件是否正确",
-          "确认Google Sheets API是否已启用",
-          "验证Sheet写入权限",
-        ]
-      );
-    } else {
-      throw new I18nError(
-        I18nErrorType.API_ERROR,
-        `${operation}失败`,
-        { originalError: error },
-        [
-          "检查网络连接",
-          "确认spreadsheetId是否正确",
-          "验证Sheet是否有足够空间",
-          "稍后重试操作",
-        ],
-        true // API错误通常是可恢复的
-      );
-    }
-  }
 }

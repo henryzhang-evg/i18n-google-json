@@ -17,4 +17,13 @@ module.exports = {
       },
     ],
   },
+  transformIgnorePatterns: [
+    "node_modules/(?!(google-spreadsheet|ky)/)"
+  ],
+  extensionsToTreatAsEsm: ['.ts', '.tsx'],
+  globals: {
+    'ts-jest': {
+      useESM: true
+    }
+  }
 };
