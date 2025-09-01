@@ -51,8 +51,88 @@ export class AstTransformer {
     source: string,
     filePath: string
   ): { results: TransformResult[]; transformedCode: string } {
+    const { root, j } = this.parseSource(source);
+    return this.performTransformation(root, j, filePath);
+  }
+
+  /**
+   * 收集源码中现有的 I18n.t() 调用
+   * @param source - 源码字符串
+   * @param filePath - 文件路径
+   * @returns 现有的 I18n 引用列表
+   */
+  public collectExistingI18nCalls(
+    source: string,
+    filePath: string
+  ): ExistingReference[] {
+    const { root, j } = this.parseSource(source);
+    return this.scanExistingI18nCalls(root, j, filePath);
+  }
+
+  /**
+   * 分析和转换源码：收集现有引用 + 处理新翻译
+   */
+  public analyzeAndTransformSource(
+    source: string,
+    filePath: string
+  ): FileAnalysisResult {
+    const { root, j } = this.parseSource(source);
+
+    // 收集现有的 I18n 引用
+    const existingReferences = this.scanExistingI18nCalls(root, j, filePath);
+
+    // 执行转换并跟踪新增引用
+    const { results: newTranslations, transformedCode } = 
+      this.performTransformation(root, j, filePath);
+
+    // 只有当存在引用时才进行导入管理
+    if (existingReferences.length > 0 || newTranslations.length > 0) {
+      // 重新解析转换后的代码进行导入管理
+      const { root: finalRoot, j: finalJ } = this.parseSource(transformedCode);
+      this.unifiedImportManagement(finalJ, finalRoot, filePath, false);
+      const finalTransformedCode = finalRoot.toSource();
+      
+      return {
+        existingReferences: [
+          ...existingReferences,
+          ...newTranslations.map(t => ({
+            key: t.key,
+            filePath,
+            lineNumber: 0,
+            columnNumber: 0,
+            callExpression: `I18n.t("${t.key}")`
+          }))
+        ],
+        newTranslations,
+        transformedCode: finalTransformedCode,
+      };
+    }
+
+    // 对于没有引用的情况，返回原始结果
+    return {
+      existingReferences,
+      newTranslations,
+      transformedCode,
+    };
+  }
+
+  /**
+   * 解析源码为AST
+   */
+  private parseSource(source: string): { root: JSCodeshiftCollection; j: JSCodeshiftAPI } {
     const j = jscodeshift.withParser("tsx");
     const root = j(source);
+    return { root, j };
+  }
+
+  /**
+   * 执行代码转换
+   */
+  private performTransformation(
+    root: JSCodeshiftCollection,
+    j: JSCodeshiftAPI,
+    filePath: string
+  ): { results: TransformResult[]; transformedCode: string } {
     const results: TransformResult[] = [];
 
     // 查找需要翻译的字符串字面量（带标记符号）
@@ -66,92 +146,12 @@ export class AstTransformer {
 
     // 添加模块化导入
     if (results.length > 0) {
-      this.addModularImports(j, root, filePath);
+      this.unifiedImportManagement(j, root, filePath, true);
     }
 
     const transformedCode = root.toSource();
 
     return { results, transformedCode };
-  }
-
-  /**
-   * 收集源码中现有的 I18n.t() 调用
-   * @param source - 源码字符串
-   * @param filePath - 文件路径
-   * @returns 现有的 I18n 引用列表
-   */
-  public collectExistingI18nCalls(
-    source: string,
-    filePath: string
-  ): ExistingReference[] {
-    const j = jscodeshift.withParser("tsx");
-    const root = j(source);
-    return this.scanExistingI18nCalls(root, j, filePath);
-  }
-
-  /**
-   * 分析和转换源码：收集现有引用 + 处理新翻译
-   */
-  public analyzeAndTransformSource(
-    source: string,
-    filePath: string
-  ): FileAnalysisResult {
-    const j = jscodeshift.withParser("tsx");
-    const root = j(source);
-
-    // 收集现有的 I18n 引用（直接基于已解析的 AST，避免重复解析导致的偶发解析冲突）
-    const existingReferences = this.collectExistingI18nCallsFromRoot(
-      root,
-      j,
-      filePath
-    );
-
-    // 检查并修复导入路径不匹配的问题
-    this.validateAndFixImportPaths(j, root, filePath);
-
-    // 查找和转换新的翻译内容 - 重新使用transformSource但只获取结果
-    const { results: newTranslations, transformedCode: finalCode } =
-      this.transformSource(source, filePath);
-
-    // 使用更新后的代码（包含了导入路径修复）
-    // 如果有新翻译，使用transformSource的结果；否则使用我们修复导入路径后的代码
-    const transformedCode =
-      newTranslations.length > 0
-        ? finalCode
-        : root.toSource({
-            quote: "double",
-            trailingComma: true,
-          });
-
-    // 关键修复：如果有新翻译，从转换后的代码中重新收集所有引用
-    let finalExistingReferences = existingReferences;
-    if (newTranslations.length > 0) {
-      Logger.debug(`🔄 [DEBUG] 发现新翻译，从转换后代码重新收集引用...`);
-      finalExistingReferences = this.collectExistingI18nCalls(
-        transformedCode,
-        filePath
-      );
-      Logger.debug(
-        `📊 [DEBUG] 重新收集后的引用数量: ${finalExistingReferences.length}`
-      );
-    }
-
-    return {
-      existingReferences: finalExistingReferences,
-      newTranslations,
-      transformedCode,
-    };
-  }
-
-  /**
-   * 基于已解析的 AST 收集现有的 I18n 引用，避免对源码进行二次解析
-   */
-  private collectExistingI18nCallsFromRoot(
-    root: JSCodeshiftCollection,
-    j: JSCodeshiftAPI,
-    filePath: string
-  ): ExistingReference[] {
-    return this.scanExistingI18nCalls(root, j, filePath);
   }
 
   /**
@@ -200,19 +200,37 @@ export class AstTransformer {
   }
 
   /**
-   * 验证并修复导入路径
+   * 统一的导入管理：验证、修复和添加所需的导入
    */
-  private validateAndFixImportPaths(
+  private unifiedImportManagement(
     j: JSCodeshiftAPI,
     root: JSCodeshiftCollection,
-    filePath: string
+    filePath: string,
+    addImports: boolean = false
   ): void {
-    // 获取当前文件应该使用的正确导入路径
     const correctImportPath = PathUtils.getTranslationImportPath(
       filePath,
       this.config
     );
 
+    // 处理翻译文件导入
+    this.handleTranslationImport(j, root, correctImportPath);
+
+    // 处理I18nUtil导入
+    if (addImports) {
+      this.handleI18nUtilImport(j, root);
+      this.addScopedInitialization(j, root, "Translations");
+    }
+  }
+
+  /**
+   * 处理翻译文件导入的统一逻辑
+   */
+  private handleTranslationImport(
+    j: JSCodeshiftAPI,
+    root: JSCodeshiftCollection,
+    correctImportPath: string
+  ): void {
     // 查找现有的翻译导入
     const existingTranslationImports = root
       .find(j.ImportDeclaration)
@@ -221,36 +239,65 @@ export class AstTransformer {
         return sourceValue?.startsWith("@translate/");
       });
 
-    let hasCorrectImport = false;
-    let hasIncorrectImport = false;
+    // 检查是否已有正确的导入
+    const hasCorrectImport = existingTranslationImports
+      .some((path: ASTPath<n.ImportDeclaration>) => {
+        return path.node.source?.value === correctImportPath;
+      });
 
-    // 检查是否有正确或错误的导入
-    existingTranslationImports.forEach((path: ASTPath<n.ImportDeclaration>) => {
-      const sourceValue = path.node.source?.value as string;
-      if (sourceValue === correctImportPath) {
-        hasCorrectImport = true;
-      } else {
-        hasIncorrectImport = true;
-      }
-    });
-
-    // 如果有错误的导入路径，需要修复
-    if (hasIncorrectImport && !hasCorrectImport) {
-      Logger.info(`🔧 检测到导入路径不匹配，正在修复: ${filePath}`);
-      Logger.debug(`   期望路径: ${correctImportPath}`);
-
-      // 移除所有错误的翻译导入
-      existingTranslationImports.remove();
-
-      // 添加正确的导入
-      const importDecl = j.importDeclaration(
-        [j.importDefaultSpecifier(j.identifier("Translations"))],
-        j.literal(correctImportPath)
-      );
-      root.get().node.program.body.unshift(importDecl);
-
-      Logger.debug(`✅ 已更新导入路径为: ${correctImportPath}`);
+    if (hasCorrectImport) {
+      return; // 已有正确导入，无需操作
     }
+
+    // 移除所有旧的翻译导入
+    existingTranslationImports.remove();
+
+    // 添加正确的导入
+    const importDecl = j.importDeclaration(
+      [j.importDefaultSpecifier(j.identifier("Translations"))],
+      j.literal(correctImportPath)
+    );
+    root.get().node.program.body.unshift(importDecl);
+  }
+
+  /**
+   * 处理I18nUtil导入的统一逻辑
+   */
+  private handleI18nUtilImport(
+    j: JSCodeshiftAPI,
+    root: JSCodeshiftCollection
+  ): void {
+    // 检查是否已经有正确的导入
+    const hasCorrectI18nUtilImport = root
+      .find(j.ImportDeclaration)
+      .some((path: ASTPath<n.ImportDeclaration>) => {
+        const nodeSource = path.node.source;
+        const nodeSpecs = path.node.specifiers;
+
+        return !!(nodeSource?.value === "@utils/i18n" &&
+          nodeSpecs?.some(spec => n.ImportSpecifier.check(spec) && spec.imported.name === "I18nUtil"));
+      });
+
+    if (hasCorrectI18nUtilImport) {
+      return;
+    }
+
+    // 移除所有旧的I18nUtil导入
+    root
+      .find(j.ImportDeclaration)
+      .filter((path: ASTPath<n.ImportDeclaration>) => {
+        const nodeSource = path.node.source;
+        const nodeSpecs = path.node.specifiers;
+        return !!(nodeSpecs?.some(spec => n.ImportSpecifier.check(spec) && spec.imported.name === "I18nUtil"));
+      })
+      .remove();
+
+    // 添加新的正确导入
+    const importDecl = j.importDeclaration(
+      [j.importSpecifier(j.identifier("I18nUtil"), j.identifier("I18nUtil"))],
+      j.literal("@utils/i18n")
+    );
+    root.get().node.program.body.unshift(importDecl);
   }
 
   /**
@@ -483,8 +530,8 @@ export class AstTransformer {
   }
 
   /**
-   * 处理包含混合内容的JSX元素（文本 + 表达式）
-   * 示例：<div>Hello {name}, welcome!</div>
+   * 处理包含混合内容的JSX元素（文本 + 表达式 + JSX元素）
+   * 示例：<div>~Hello {name}, <strong>welcome</strong> to <Link>site</Link>~</div>
    */
   private handleJSXMixedContent(
     path: ASTPath<n.JSXElement>,
@@ -494,21 +541,47 @@ export class AstTransformer {
     const element = path.node;
     const children = element.children || [];
 
-    // 检查是否包含混合内容（至少有一个文本节点和一个表达式）
-    const hasText = children.some(
-      (child) => n.JSXText.check(child) && child.value.trim()
-    );
-    const hasExpression = children.some((child) =>
-      n.JSXExpressionContainer.check(child)
-    );
+    // 检查是否包含标记的文本内容
+    const hasMarkedText = children.some((child) => {
+      if (n.JSXText.check(child)) {
+        const textValue = child.value;
+        return StringUtils.isTranslatableString(textValue, this.config) ||
+               textValue.includes(this.config.startMarker) ||
+               textValue.includes(this.config.endMarker);
+      }
+      return false;
+    });
 
-    if (!hasText || !hasExpression) {
+    if (!hasMarkedText) {
       return null;
     }
 
-    // 构建翻译文本和表达式列表
+    // 构建完整的内容文本，检查整体是否符合翻译条件
+    let fullText = "";
+    for (const child of children) {
+      if (n.JSXText.check(child)) {
+        fullText += child.value;
+      } else if (n.JSXExpressionContainer.check(child)) {
+        fullText += "${var}";  // 临时占位符
+      } else if (n.JSXElement.check(child)) {
+        fullText += "<element/>";  // 临时占位符
+      }
+    }
+
+    // 检查整体文本是否需要翻译（包含标记符号）
+    // 修复：不仅检查完整标记，还要检查分布在多个节点的标记
+    const startsWithMarker = fullText.trimStart().startsWith(this.config.startMarker);
+    const endsWithMarker = fullText.trimEnd().endsWith(this.config.endMarker);
+    
+    if (!startsWithMarker || !endsWithMarker) {
+      return null;
+    }
+
+    // 构建翻译文本和插值对象
     let translationText = "";
-    const expressions: n.Expression[] = [];
+    const interpolationOptions: Record<string, any> = {};
+    let varIndex = 0;
+    let elementIndex = 0;
     let hasEnglishContent = false;
 
     for (const child of children) {
@@ -524,9 +597,21 @@ export class AstTransformer {
         child.expression &&
         !n.JSXEmptyExpression.check(child.expression)
       ) {
-        // 添加占位符
-        translationText += `%{var${expressions.length}}`;
-        expressions.push(child.expression as n.Expression);
+        // 处理变量表达式
+        translationText += `%{var${varIndex}}`;
+        interpolationOptions[`var${varIndex}`] = child.expression;
+        varIndex++;
+      } else if (n.JSXElement.check(child)) {
+        // 处理JSX元素（HTML标签或React组件）- 使用平铺方式处理嵌套
+        const flattenResult = this.flattenJSXElement(child, elementIndex, varIndex, j);
+        translationText += flattenResult.text;
+        
+        // 合并插值选项
+        Object.assign(interpolationOptions, flattenResult.options);
+        
+        // 更新索引
+        elementIndex += flattenResult.elementCount;
+        varIndex += flattenResult.varCount;
       }
     }
 
@@ -535,7 +620,9 @@ export class AstTransformer {
       return null;
     }
 
-    // 清理翻译文本：去除前后空白字符（包括换行符），规范化内部空白
+    // 应用格式化和清理（先去除标记符号，再清理空格等）
+    // 对于JSX混合内容，需要特殊处理标记符号的清理
+    translationText = this.cleanMixedContentMarkers(translationText, this.config);
     translationText = StringUtils.cleanExtractedText(translationText);
 
     if (!translationText) {
@@ -545,13 +632,9 @@ export class AstTransformer {
     const key = StringUtils.generateTranslationKey(filePath, translationText);
 
     // 构建 I18n.t 调用
-    let optionsObj: n.ObjectExpression | undefined;
-    if (expressions.length > 0) {
-      const properties = expressions.map((expr, index) =>
-        AstUtils.createProperty(`var${index}`, expr)
-      );
-      optionsObj = AstUtils.createObjectExpression(properties);
-    }
+    const optionsObj = Object.keys(interpolationOptions).length > 0 
+      ? this.createObjectExpressionFromMap(interpolationOptions, j)
+      : undefined;
 
     const callExpr = AstUtils.createI18nCall(key, optionsObj);
 
@@ -661,180 +744,8 @@ export class AstTransformer {
     return AstUtils.createI18nCall(key, optionsObj || undefined);
   }
 
-  /**
-   * 添加模块化导入和初始化
-   */
-  private addModularImports(
-    j: JSCodeshiftAPI,
-    root: JSCodeshiftCollection,
-    filePath: string
-  ): void {
-    // 1. 添加翻译文件导入
-    const translationImportPath = PathUtils.getTranslationImportPath(
-      filePath,
-      this.config
-    );
 
-    this.addTranslationImport(
-      j,
-      root,
-      "Translations", // 统一使用 "Translations" 变量名
-      translationImportPath
-    );
 
-    // 2. 添加 I18nUtil 导入
-    this.addI18nUtilImport(j, root);
-
-    // 3. 在组件/函数开头添加 scoped 初始化
-    this.addScopedInitialization(j, root, "Translations");
-  }
-
-  /**
-   * 添加翻译文件导入（使用默认导入）
-   * 处理文件路径变更时的导入更新
-   */
-  private addTranslationImport(
-    j: JSCodeshiftAPI,
-    root: JSCodeshiftCollection,
-    varName: string,
-    importPath: string
-  ): void {
-    // 检查是否已经有正确的导入路径
-    const hasCorrectImport = root
-      .find(j.ImportDeclaration)
-      .some((path: ASTPath<n.ImportDeclaration>) => {
-        return path.node.source?.value === importPath;
-      });
-
-    if (hasCorrectImport) {
-      return; // 已经有正确的导入，无需操作
-    }
-
-    // 查找并移除所有使用 "Translations" 变量名的旧导入
-    // 这样可以处理文件路径变更的情况
-    root
-      .find(j.ImportDeclaration)
-      .filter((path: ASTPath<n.ImportDeclaration>) => {
-        const specifiers = path.node.specifiers;
-        if (!specifiers || specifiers.length === 0) return false;
-
-        // 检查是否是 @translate 开头的导入且使用了 Translations 变量名
-        const sourceValue = path.node.source?.value as string;
-        const isTranslateImport = sourceValue?.startsWith("@translate/");
-
-        // 检查是否有默认导入且变量名是 "Translations"
-        const hasTranslationsImport = specifiers.some(
-          (spec) =>
-            n.ImportDefaultSpecifier.check(spec) &&
-            n.Identifier.check(spec.local) &&
-            spec.local.name === "Translations"
-        );
-
-        return isTranslateImport && hasTranslationsImport;
-      })
-      .remove();
-
-    // 添加新的正确导入
-    const importDecl = j.importDeclaration(
-      [j.importDefaultSpecifier(j.identifier("Translations"))],
-      j.literal(importPath)
-    );
-    root.get().node.program.body.unshift(importDecl);
-  }
-
-  /**
-   * 添加 I18nUtil 导入
-   * 处理旧导入路径的更新：@utils -> @utils/i18n
-   */
-  private addI18nUtilImport(
-    j: JSCodeshiftAPI,
-    root: JSCodeshiftCollection
-  ): void {
-    // 检查是否已经有正确的新导入路径
-    const hasCorrectI18nUtilImport = root
-      .find(j.ImportDeclaration)
-      .some((path: ASTPath<n.ImportDeclaration>) => {
-        const nodeSource = path.node.source;
-        const nodeSpecs = path.node.specifiers;
-
-        return !!(
-          nodeSource?.value === "@utils/i18n" &&
-          nodeSpecs?.some(
-            (spec) =>
-              n.ImportSpecifier.check(spec) && spec.imported.name === "I18nUtil"
-          )
-        );
-      });
-
-    if (hasCorrectI18nUtilImport) {
-      return; // 已经有正确的导入，无需操作
-    }
-
-    // 查找并移除所有旧的 I18nUtil 导入（包括 @utils 路径）
-    root
-      .find(j.ImportDeclaration)
-      .filter((path: ASTPath<n.ImportDeclaration>) => {
-        const nodeSource = path.node.source;
-        const nodeSpecs = path.node.specifiers;
-
-        // 检查是否是从 @utils 或 @utils/i18n 导入 I18nUtil
-        const isI18nUtilImport = !!(
-          (nodeSource?.value === "@utils" ||
-            nodeSource?.value === "@utils/i18n") &&
-          nodeSpecs?.some(
-            (spec) =>
-              n.ImportSpecifier.check(spec) && spec.imported.name === "I18nUtil"
-          )
-        );
-
-        return isI18nUtilImport;
-      })
-      .remove();
-
-    // 添加新的正确导入（保持已有默认/命名导入稳定，避免重复声明）
-    // 如果已经从 @utils 或 @utils/i18n 有任何导入，则追加命名导入；否则新增一条导入声明
-    const existingUtilsImportColl = root
-      .find(j.ImportDeclaration)
-      .filter((p: ASTPath<n.ImportDeclaration>) => {
-        const src = p.node.source?.value;
-        return src === "@utils/i18n" || src === "@utils";
-      });
-
-    if (existingUtilsImportColl.length > 0) {
-      const first = existingUtilsImportColl.at(0);
-      if (first.length > 0) {
-        const decl = first.get().node as n.ImportDeclaration;
-        const specs = decl.specifiers || [];
-        // 仅当未包含 I18nUtil 时追加
-        const hasI18nUtil = specs.some(
-          (s) => n.ImportSpecifier.check(s) && s.imported.name === "I18nUtil"
-        );
-        if (!hasI18nUtil) {
-          specs.push(
-            j.importSpecifier(
-              j.identifier("I18nUtil"),
-              j.identifier("I18nUtil")
-            )
-          );
-          decl.specifiers = specs as any;
-        }
-      }
-    } else {
-      root
-        .get()
-        .node.program.body.unshift(
-          j.importDeclaration(
-            [
-              j.importSpecifier(
-                j.identifier("I18nUtil"),
-                j.identifier("I18nUtil")
-              ),
-            ],
-            j.literal("@utils/i18n")
-          )
-        );
-    }
-  }
 
   /**
    * 添加 scoped 初始化（统一在文件顶部添加）
@@ -928,5 +839,201 @@ export class AstTransformer {
 
     // 在导入语句之后插入初始化语句
     program.body.splice(insertIndex, 0, statement as any);
+  }
+
+  /**
+   * 平铺JSX元素（将嵌套结构展平为同级元素）
+   */
+  private flattenJSXElement(
+    element: n.JSXElement,
+    startElementIndex: number,
+    startVarIndex: number,
+    j: JSCodeshiftAPI
+  ): {
+    text: string;
+    options: Record<string, any>;
+    elementCount: number;
+    varCount: number;
+  } {
+    const options: Record<string, any> = {};
+    let elementIndex = startElementIndex;
+    let varIndex = startVarIndex;
+    
+    // 处理当前元素的内容
+    const contentResult = this.extractElementContentFlat(element, varIndex);
+    const elementContent = contentResult.text;
+    varIndex += contentResult.varCount;
+    
+    // 合并内容中的变量选项
+    Object.assign(options, contentResult.options);
+    
+    // 创建当前元素的工厂
+    options[`el${elementIndex}`] = this.createElementFactory(element, j);
+    
+    // 生成元素的占位符文本
+    const text = elementContent 
+      ? `<el${elementIndex}>${elementContent}</el${elementIndex}>`
+      : `<el${elementIndex}/>`;
+    
+    return {
+      text,
+      options,
+      elementCount: 1,
+      varCount: contentResult.varCount
+    };
+  }
+
+  /**
+   * 提取元素内容（平铺方式，不递归处理嵌套元素）
+   */
+  private extractElementContentFlat(
+    element: n.JSXElement,
+    startVarIndex: number
+  ): {
+    text: string;
+    options: Record<string, any>;
+    varCount: number;
+  } {
+    let textContent = "";
+    const options: Record<string, any> = {};
+    let varIndex = startVarIndex;
+    const children = element.children || [];
+    
+    for (const child of children) {
+      if (n.JSXText.check(child)) {
+        textContent += child.value;
+      } else if (n.JSXExpressionContainer.check(child)) {
+        // 变量表达式
+        textContent += `%{var${varIndex}}`;
+        options[`var${varIndex}`] = child.expression;
+        varIndex++;
+      } else if (n.JSXElement.check(child)) {
+        // 嵌套元素：这里不递归，而是将其视为占位符
+        // 这意味着嵌套结构会被简化
+        textContent += `<nested-element/>`;
+      }
+    }
+    
+    return {
+      text: StringUtils.cleanExtractedText(textContent),
+      options,
+      varCount: varIndex - startVarIndex
+    };
+  }
+
+  /**
+   * 创建元素工厂函数
+   */
+  private createElementFactory(element: n.JSXElement, j: JSCodeshiftAPI): n.ArrowFunctionExpression {
+    const hasTextContent = this.hasTextChildren(element);
+    const jsxElement = this.createJSXElementWithDynamicText(element, hasTextContent, j);
+
+    return hasTextContent
+      ? j.arrowFunctionExpression([j.identifier('text')], jsxElement)
+      : j.arrowFunctionExpression([], jsxElement);
+  }
+
+  /**
+   * 创建带有动态文本的JSX元素
+   */
+  private createJSXElementWithDynamicText(
+    originalElement: n.JSXElement, 
+    hasTextContent: boolean, 
+    j: JSCodeshiftAPI
+  ): n.JSXElement {
+    const elementName = this.getElementName(originalElement);
+    const attributes = originalElement.openingElement.attributes || [];
+    
+    // 创建开始标签
+    const openingElement = j.jsxOpeningElement(
+      j.jsxIdentifier(elementName),
+      attributes
+    );
+    
+    // 如果是自闭合标签（无文本内容），设置selfClosing为true
+    if (!hasTextContent) {
+      openingElement.selfClosing = true;
+      return j.jsxElement(openingElement, null, []);
+    }
+    
+    // 创建结束标签
+    const closingElement = j.jsxClosingElement(j.jsxIdentifier(elementName));
+    
+    // 子元素：{text} 表达式
+    const children = [j.jsxExpressionContainer(j.identifier('text'))];
+    
+    return j.jsxElement(openingElement, closingElement, children);
+  }
+
+  /**
+   * 获取JSX元素名称
+   */
+  private getElementName(element: n.JSXElement): string {
+    const name = element.openingElement.name;
+    if (n.JSXIdentifier.check(name)) {
+      return name.name;
+    }
+    // 处理JSXMemberExpression等复杂情况
+    return 'div'; // 默认fallback
+  }
+
+
+  /**
+   * 检查元素是否有文本子节点
+   */
+  private hasTextChildren(element: n.JSXElement): boolean {
+    const children = element.children || [];
+    return children.some(child => 
+      n.JSXText.check(child) && child.value.trim() ||
+      n.JSXExpressionContainer.check(child) ||
+      n.JSXElement.check(child)
+    );
+  }
+
+  /**
+   * 通用的对象表达式创建工具
+   */
+  private createObjectExpressionFromMap(
+    options: Record<string, any>, 
+    j: JSCodeshiftAPI
+  ): n.ObjectExpression {
+    const properties: n.Property[] = [];
+    
+    for (const [key, value] of Object.entries(options)) {
+      if (n.Node.check(value)) {
+        // AST节点
+        properties.push(j.property('init', j.identifier(key), value as any));
+      } else if (n.ArrowFunctionExpression.check(value) || typeof value === 'function') {
+        // 函数
+        properties.push(j.property('init', j.identifier(key), value as any));
+      } else if (value === null) {
+        // 布尔属性
+        properties.push(j.property('init', j.identifier(key), j.literal(true)));
+      } else {
+        // 其他字面值
+        properties.push(j.property('init', j.identifier(key), j.literal(value)));
+      }
+    }
+    
+    return j.objectExpression(properties);
+  }
+
+  /**
+   * 清理JSX混合内容中的标记符号
+   * 专门处理标记符号可能分布在文本中任意位置的情况
+   */
+  private cleanMixedContentMarkers(text: string, config: I18nConfig): string {
+    const { startMarker, endMarker } = config;
+    
+    // 转义特殊字符用于正则表达式
+    const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    
+    // 移除开始标记符号（可能在任意位置，但通常在开头附近）
+    let cleaned = text.replace(new RegExp(escapeRegex(startMarker), 'g'), '');
+    
+    // 移除结束标记符号（可能在任意位置，但通常在结尾附近）
+    cleaned = cleaned.replace(new RegExp(escapeRegex(endMarker), 'g'), '');
+    
+    return cleaned;
   }
 }

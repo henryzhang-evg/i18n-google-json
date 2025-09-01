@@ -6,8 +6,10 @@ import type { TransformResult } from "./AstTransformer";
 import { GoogleSheetsSync } from "./GoogleSheetsSync";
 import { I18nError, I18nErrorType } from "../errors/I18nError";
 import { PathUtils } from "../utils/PathUtils";
-import { llmTranslate } from "../utils/llmTranslate";
+import { translateWithGlossary } from "../utils/llmTranslate";
+import { GlossaryManager } from "../utils/GlossaryManager";
 import { Logger } from "../utils/StringUtils";
+import { TranslationOptions, GlossaryMap } from "../types";
 
 export interface TranslationMap {
   [key: string]: string;
@@ -35,9 +37,16 @@ export interface CompleteTranslationRecord {
 
 export class TranslationManager {
   private googleSheetsSync: GoogleSheetsSync;
+  private glossaryManager?: GlossaryManager;
+  private glossaryCache?: GlossaryMap;
 
   constructor(private config: I18nConfig) {
     this.googleSheetsSync = new GoogleSheetsSync(config);
+    
+    // 初始化术语表管理器（如果启用）
+    if (config.enableGlossary && config.glossarySpreadsheetId) {
+      this.glossaryManager = new GlossaryManager(config);
+    }
   }
 
   /**
@@ -46,6 +55,14 @@ export class TranslationManager {
   public async initialize(): Promise<void> {
     try {
       await this.checkOutputDir();
+      
+      // 加载术语表（如果启用）
+      if (this.glossaryManager) {
+        Logger.info("📚 [术语表] 加载术语表...");
+        this.glossaryCache = await this.glossaryManager.loadGlossary();
+        const stats = this.glossaryManager.getGlossaryStats(this.glossaryCache);
+        Logger.info(`📚 [术语表] 术语表加载完成，共 ${stats.totalTerms} 个术语`);
+      }
     } catch (error) {
       if (error instanceof I18nError) {
         throw error;
@@ -368,15 +385,26 @@ export class TranslationManager {
               (record[classifiedModulePath][key] as any)[lang] = key;
             } else {
               try {
-                const translated = await llmTranslate(
+                const translationOptions: TranslationOptions = {
+                  retries: this.config.llmRetries || 3,
+                  timeout: this.config.llmTimeout || 30000,
+                  temperature: this.config.llmTemperature || 0.2,
+                  model: this.config.llmModel || "qwen-turbo",
+                  enableGlossary: this.config.enableGlossary || false,
+                };
+
+                const translated = await translateWithGlossary(
                   key,
                   "en",
                   lang,
-                  this.config.apiKey
+                  this.config.apiKey,
+                  translationOptions,
+                  this.glossaryCache
                 );
                 (record[classifiedModulePath][key] as any)[lang] =
                   translated || key;
               } catch (e) {
+                Logger.warn(`⚠️ [翻译] ${lang} 语言翻译失败，使用原文: ${key}`);
                 (record[classifiedModulePath][key] as any)[lang] = key; // 降级
               }
             }
