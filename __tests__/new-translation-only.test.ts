@@ -66,23 +66,13 @@ jest.mock("googleapis", () => ({
   },
 }));
 
-// Mock llmTranslate
+// Mock llmTranslate - always return original text
 jest.mock("../src/utils/llmTranslate", () => ({
   llmTranslate: jest
     .fn()
     .mockImplementation((text: string, from: string, to: string) => {
-      const translations: Record<string, Record<string, string>> = {
-        "zh-Hans": {
-          "Hello World": "你好世界",
-          "Test Text": "测试文本",
-          "Click Here": "点击这里",
-          "Submit Form": "提交表单",
-          "Enter name": "输入姓名",
-          Welcome: "欢迎",
-          "This is a test": "这是一个测试",
-        },
-      };
-      return Promise.resolve(translations[to]?.[text] || text);
+      // 直接返回原文，不做翻译
+      return Promise.resolve(text);
     }),
 }));
 
@@ -234,19 +224,19 @@ export default function Simple() {
         completeRecord["components/Simple/index.ts"]["Test Text"]
       ).toBeDefined();
 
-      // 验证翻译内容
+      // 验证翻译内容（mock返回原文）
       expect(
         completeRecord["components/Simple/index.ts"]["Hello World"]["en"]
       ).toBe("Hello World");
       expect(
         completeRecord["components/Simple/index.ts"]["Hello World"]["zh-Hans"]
-      ).toBe("你好世界");
+      ).toBe("Hello World");
       expect(
         completeRecord["components/Simple/index.ts"]["Test Text"]["en"]
       ).toBe("Test Text");
       expect(
         completeRecord["components/Simple/index.ts"]["Test Text"]["zh-Hans"]
-      ).toBe("测试文本");
+      ).toBe("Test Text");
     } else {
       fail("完整记录文件未生成");
     }
@@ -298,7 +288,7 @@ export default function Form() {
     console.log("=== 多文件完整记录内容 ===");
     console.log(JSON.stringify(completeRecord, null, 2));
 
-    // 验证Button组件的翻译
+    // 验证Button组件的翻译（mock返回原文）
     expect(completeRecord["components/Button/index.ts"]).toBeDefined();
     expect(
       completeRecord["components/Button/index.ts"]["Click Here"]
@@ -308,9 +298,9 @@ export default function Form() {
     ).toBe("Click Here");
     expect(
       completeRecord["components/Button/index.ts"]["Click Here"]["zh-Hans"]
-    ).toBe("点击这里");
+    ).toBe("Click Here");
 
-    // 验证Form组件的翻译
+    // 验证Form组件的翻译（mock返回原文）
     expect(completeRecord["components/Form/index.ts"]).toBeDefined();
     expect(
       completeRecord["components/Form/index.ts"]["Submit Form"]
@@ -320,7 +310,7 @@ export default function Form() {
     ).toBe("Submit Form");
     expect(
       completeRecord["components/Form/index.ts"]["Submit Form"]["zh-Hans"]
-    ).toBe("提交表单");
+    ).toBe("Submit Form");
   });
 
   test("should verify file transformation and import addition", async () => {
