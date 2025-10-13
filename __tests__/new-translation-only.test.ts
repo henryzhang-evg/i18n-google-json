@@ -103,12 +103,23 @@ describe("New Translation Only Test", () => {
   };
 
   beforeEach(() => {
-    // 清理测试目录
-    if (fs.existsSync("test-src")) {
-      fs.rmSync("test-src", { recursive: true, force: true });
+    // 清理测试目录 - 使用 try-catch 处理权限问题
+    try {
+      if (fs.existsSync("test-src")) {
+        fs.rmSync("test-src", { recursive: true, force: true, maxRetries: 3 });
+      }
+    } catch (error) {
+      // 忽略清理错误，允许测试继续
+      console.warn("Warning: Could not clean test-src directory:", error);
     }
-    if (fs.existsSync("test-translate")) {
-      fs.rmSync("test-translate", { recursive: true, force: true });
+
+    try {
+      if (fs.existsSync("test-translate")) {
+        fs.rmSync("test-translate", { recursive: true, force: true, maxRetries: 3 });
+      }
+    } catch (error) {
+      // 忽略清理错误，允许测试继续
+      console.warn("Warning: Could not clean test-translate directory:", error);
     }
 
     // 清理所有mock

@@ -156,8 +156,8 @@ export class TranslationManager {
       const existingRecord =
         existingRecordOverride ?? (await this.loadCompleteRecord());
 
-      // 2. 构建基于新引用的记录
-      const newRecord = await this.buildCompleteRecord(allReferences);
+      // 2. 构建基于新引用的记录（传递existingRecord以避免重新加载）
+      const newRecord = await this.buildCompleteRecord(allReferences, existingRecord);
 
       // 3. 合并记录：现有记录优先（保留无用Key），新记录补充
       const mergedRecord: CompleteTranslationRecord = { ...existingRecord };
@@ -262,14 +262,15 @@ export class TranslationManager {
    * 4. 检测和处理文件移动导致的路径变更
    */
   private async buildCompleteRecord(
-    allReferences: Map<string, any[]>
+    allReferences: Map<string, any[]>,
+    existingRecordOverride?: CompleteTranslationRecord
   ): Promise<CompleteTranslationRecord> {
     Logger.debug("🏗️ [DEBUG] 开始构建完整记录（智能合并模式）...");
 
-    // 第一步：加载现有的完整记录（包含远程翻译数据）
-    const existingRecord = await this.loadCompleteRecord();
+    // 第一步：加载现有的完整记录（包含远程翻译数据），或使用提供的覆盖记录
+    const existingRecord = existingRecordOverride ?? (await this.loadCompleteRecord());
     Logger.debug(
-      `📖 [DEBUG] 加载现有记录，包含 ${
+      `📖 [DEBUG] ${existingRecordOverride ? '使用提供的记录覆盖' : '加载现有记录'}，包含 ${
         Object.keys(existingRecord).length
       } 个模块`
     );
