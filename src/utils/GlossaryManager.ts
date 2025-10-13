@@ -89,6 +89,7 @@ export class GlossaryManager {
         }
 
         let hasValidTranslation = false;
+
         this.config.languages.forEach((langCode) => {
           if (langCode === "en") return; // 跳过英文
 
@@ -125,51 +126,9 @@ export class GlossaryManager {
   }
 
   /**
-   * 应用术语表进行术语替换
-   * @param text 待处理文本
-   * @param languageCode 目标语言代码
-   * @param glossary 术语表映射
-   * @returns 替换后的文本
+   * @deprecated 此方法已废弃，新逻辑改为在翻译前完全匹配术语表
+   * 参见 llmTranslate.ts 中的 translateWithGlossary 函数
    */
-  applyGlossary(
-    text: string,
-    languageCode: string,
-    glossary: GlossaryMap
-  ): string {
-    const langGlossary = glossary[languageCode];
-    if (!langGlossary || Object.keys(langGlossary).length === 0) {
-      return text;
-    }
-
-    let result = text;
-    let replacementCount = 0;
-
-    // 按术语长度排序，优先匹配长术语（避免短术语覆盖长术语）
-    const sortedTerms = Object.keys(langGlossary).sort((a, b) => b.length - a.length);
-
-    sortedTerms.forEach((englishTerm) => {
-      const translation = langGlossary[englishTerm];
-      if (translation) {
-        // 转义特殊字符，构建词边界匹配的正则表达式
-        const escapedTerm = englishTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`\\b${escapedTerm}\\b`, "gi");
-        
-        const beforeReplace = result;
-        result = result.replace(regex, translation);
-        
-        if (result !== beforeReplace) {
-          replacementCount++;
-          Logger.debug(`📚 [术语表] 替换术语: "${englishTerm}" -> "${translation}"`);
-        }
-      }
-    });
-
-    if (replacementCount > 0) {
-      Logger.debug(`📚 [术语表] 共完成 ${replacementCount} 个术语替换`);
-    }
-
-    return result;
-  }
 
   /**
    * 创建空的术语表映射

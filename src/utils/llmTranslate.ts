@@ -94,41 +94,51 @@ ${text.trim()}`;
 }
 
 /**
- * 应用术语表进行术语替换
- * @param text 待处理文本
- * @param languageCode 目标语言代码
+ * 检查英文key是否在术语表中完全匹配
+ * @param englishKey 英文key
  * @param glossary 术语表映射
+ * @returns 是否存在完全匹配
  */
-export function applyGlossary(
-  text: string,
-  languageCode: string,
+export function isTermInGlossary(
+  englishKey: string,
   glossary: GlossaryMap
-): string {
-  const langGlossary = glossary[languageCode];
-  if (!langGlossary || Object.keys(langGlossary).length === 0) {
-    return text;
-  }
-
-  let result = text;
-  
-  // 按术语长度排序，优先匹配长术语
-  const sortedTerms = Object.keys(langGlossary).sort((a, b) => b.length - a.length);
-  
-  sortedTerms.forEach(englishTerm => {
-    const translation = langGlossary[englishTerm];
-    if (translation) {
-      // 使用词边界匹配，避免部分匹配
-      const regex = new RegExp(`\\b${englishTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
-      result = result.replace(regex, translation);
+): boolean {
+  // 检查任意语言的术语表中是否包含该英文key
+  for (const langGlossary of Object.values(glossary)) {
+    if (langGlossary[englishKey]) {
+      return true;
     }
-  });
-
-  return result;
+  }
+  return false;
 }
 
 /**
- * 带术语表支持的翻译函数
- * @param text 原文
+ * 从术语表获取指定语言的翻译
+ * @param englishKey 英文key（完全匹配）
+ * @param languageCode 目标语言代码
+ * @param glossary 术语表映射
+ * @returns 术语表中的翻译，如果不存在返回null
+ */
+export function getTermTranslation(
+  englishKey: string,
+  languageCode: string,
+  glossary: GlossaryMap
+): string | null {
+  const langGlossary = glossary[languageCode];
+  if (!langGlossary) {
+    return null;
+  }
+  return langGlossary[englishKey] || null;
+}
+
+/**
+ * 带术语表支持的翻译函数（重新设计版本）
+ *
+ * 新逻辑：
+ * 1. 如果英文key在术语表中完全匹配，直接返回术语表的翻译，不调用LLM
+ * 2. 如果不匹配，使用LLM进行翻译
+ *
+ * @param text 原文（英文key）
  * @param from 源语言
  * @param to 目标语言
  * @param apiKey API密钥
@@ -143,17 +153,17 @@ export async function translateWithGlossary(
   options: TranslationOptions = {},
   glossary?: GlossaryMap
 ): Promise<string> {
-  // 先进行基础翻译
-  const translated = await llmTranslate(text, from, to, apiKey, options);
-  
-  // 如果启用术语表且术语表可用，则应用术语替换
+  // 新逻辑：如果启用术语表且术语表可用，先检查是否完全匹配
   if (options.enableGlossary && glossary) {
-    const withGlossary = applyGlossary(translated, to, glossary);
-    if (withGlossary !== translated) {
-      Logger.info(`📚 [术语表] 应用术语替换: "${translated}" -> "${withGlossary}"`);
+    const termTranslation = getTermTranslation(text, to, glossary);
+
+    if (termTranslation) {
+      Logger.info(`📚 [术语表] 使用术语表翻译: "${text}" -> "${termTranslation}"`);
+      return termTranslation;
     }
-    return withGlossary;
   }
-  
+
+  // 如果术语表中没有匹配，使用LLM翻译
+  const translated = await llmTranslate(text, from, to, apiKey, options);
   return translated;
 }

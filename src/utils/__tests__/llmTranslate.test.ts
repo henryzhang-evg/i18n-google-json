@@ -1,5 +1,6 @@
-import { llmTranslate } from "../llmTranslate";
+import { llmTranslate, translateWithGlossary, isTermInGlossary, getTermTranslation } from "../llmTranslate";
 import OpenAI from "openai";
+import type { GlossaryMap } from "../../types";
 
 // Mock OpenAI
 jest.mock("openai");
@@ -271,6 +272,185 @@ describe("llmTranslate", () => {
           ]),
         })
       );
+    });
+  });
+
+  describe("Glossary Exact Matching (New Logic)", () => {
+    let glossary: GlossaryMap;
+
+    beforeEach(() => {
+      glossary = {
+        ko: {
+          "Trading Mindshare": "거래 마인드셰어",
+          "Crypto Mindshare": "암호화폐 마인드셰어",
+          "API": "접구",
+        },
+        zh: {
+          "Trading Mindshare": "交易思维份额",
+          "Crypto Mindshare": "加密思维份额",
+          "API": "接口",
+        },
+        es: {}
+      };
+    });
+
+    describe("isTermInGlossary", () => {
+      it("should return true when term exists in glossary", () => {
+        expect(isTermInGlossary("Trading Mindshare", glossary)).toBe(true);
+        expect(isTermInGlossary("API", glossary)).toBe(true);
+      });
+
+      it("should return false when term does not exist", () => {
+        expect(isTermInGlossary("Unknown Term", glossary)).toBe(false);
+        expect(isTermInGlossary("Hello World", glossary)).toBe(false);
+      });
+
+      it("should return false for empty glossary", () => {
+        expect(isTermInGlossary("API", { ko: {}, zh: {} })).toBe(false);
+      });
+    });
+
+    describe("getTermTranslation", () => {
+      it("should return exact translation when term exists", () => {
+        expect(getTermTranslation("Trading Mindshare", "ko", glossary)).toBe("거래 마인드셰어");
+        expect(getTermTranslation("API", "zh", glossary)).toBe("接口");
+      });
+
+      it("should return null when term does not exist", () => {
+        expect(getTermTranslation("Unknown Term", "ko", glossary)).toBeNull();
+      });
+
+      it("should return null when language does not exist in glossary", () => {
+        expect(getTermTranslation("API", "fr", glossary)).toBeNull();
+      });
+
+      it("should return null for empty glossary language", () => {
+        expect(getTermTranslation("API", "es", glossary)).toBeNull();
+      });
+    });
+
+    describe("translateWithGlossary - Exact Match Logic", () => {
+      it("should use glossary translation when exact match exists", async () => {
+        const result = await translateWithGlossary(
+          "Trading Mindshare",
+          "en",
+          "ko",
+          "test-api-key",
+          { enableGlossary: true },
+          glossary
+        );
+
+        expect(result).toBe("거래 마인드셰어");
+        expect(mockCreate).not.toHaveBeenCalled(); // Should NOT call LLM
+      });
+
+      it("should use LLM when exact match does not exist", async () => {
+        const mockResponse = {
+          choices: [{
+            message: { content: "LLM 번역 결과" }
+          }]
+        };
+        mockCreate.mockResolvedValueOnce(mockResponse);
+
+        const result = await translateWithGlossary(
+          "Hello World",
+          "en",
+          "ko",
+          "test-api-key",
+          { enableGlossary: true },
+          glossary
+        );
+
+        expect(result).toBe("LLM 번역 결과");
+        expect(mockCreate).toHaveBeenCalled(); // Should call LLM
+      });
+
+      it("should call LLM when glossary is disabled", async () => {
+        const mockResponse = {
+          choices: [{
+            message: { content: "LLM 번역" }
+          }]
+        };
+        mockCreate.mockResolvedValueOnce(mockResponse);
+
+        const result = await translateWithGlossary(
+          "Trading Mindshare",
+          "en",
+          "ko",
+          "test-api-key",
+          { enableGlossary: false },
+          glossary
+        );
+
+        expect(result).toBe("LLM 번역");
+        expect(mockCreate).toHaveBeenCalled();
+      });
+
+      it("should call LLM when glossary is not provided", async () => {
+        const mockResponse = {
+          choices: [{
+            message: { content: "LLM 번역" }
+          }]
+        };
+        mockCreate.mockResolvedValueOnce(mockResponse);
+
+        const result = await translateWithGlossary(
+          "Trading Mindshare",
+          "en",
+          "ko",
+          "test-api-key",
+          { enableGlossary: true }
+        );
+
+        expect(result).toBe("LLM 번역");
+        expect(mockCreate).toHaveBeenCalled();
+      });
+
+      it("should handle case-sensitive exact matching", async () => {
+        const mockResponse = {
+          choices: [{
+            message: { content: "LLM lowercase" }
+          }]
+        };
+        mockCreate.mockResolvedValueOnce(mockResponse);
+
+        // Exact match is case-sensitive now
+        const result = await translateWithGlossary(
+          "trading mindshare", // lowercase - no match
+          "en",
+          "ko",
+          "test-api-key",
+          { enableGlossary: true },
+          glossary
+        );
+
+        expect(result).toBe("LLM lowercase");
+        expect(mockCreate).toHaveBeenCalled();
+      });
+
+      it("should work with multiple languages correctly", async () => {
+        const resultKo = await translateWithGlossary(
+          "API",
+          "en",
+          "ko",
+          "test-api-key",
+          { enableGlossary: true },
+          glossary
+        );
+
+        const resultZh = await translateWithGlossary(
+          "API",
+          "en",
+          "zh",
+          "test-api-key",
+          { enableGlossary: true },
+          glossary
+        );
+
+        expect(resultKo).toBe("접구");
+        expect(resultZh).toBe("接口");
+        expect(mockCreate).not.toHaveBeenCalled();
+      });
     });
   });
 });

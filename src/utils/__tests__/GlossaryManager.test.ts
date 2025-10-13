@@ -143,79 +143,9 @@ describe("GlossaryManager", () => {
     });
   });
 
-  describe("Term Replacement Logic", () => {
-    let glossary: any;
-
-    beforeEach(() => {
-      glossary = {
-        zh: {
-          "Hello": "你好",
-          "World": "世界",
-          "Hello World": "你好世界",
-          "API": "接口",
-          "user interface": "用户界面",
-        },
-        es: {
-          "Hello": "Hola",
-          "World": "Mundo",
-          "Hello World": "Hola Mundo",
-          "API": "API",
-          "user interface": "interfaz de usuario",
-        },
-      };
-    });
-
-    it("should apply simple term replacements", () => {
-      const result = glossaryManager.applyGlossary("Hello", "zh", glossary);
-      expect(result).toBe("你好");
-    });
-
-    it("should handle case-insensitive matching", () => {
-      const result = glossaryManager.applyGlossary("hello", "zh", glossary);
-      expect(result).toBe("你好");
-    });
-
-    it("should prioritize longer matches over shorter ones", () => {
-      const result = glossaryManager.applyGlossary("Hello World", "zh", glossary);
-      expect(result).toBe("你好世界"); // Should match full phrase, not "Hello" + "World"
-    });
-
-    it("should handle partial matches in longer text", () => {
-      const result = glossaryManager.applyGlossary("The Hello World API", "zh", glossary);
-      expect(result).toBe("The 你好世界 接口");
-    });
-
-    it("should handle multiple term replacements", () => {
-      const result = glossaryManager.applyGlossary("Hello API World", "zh", glossary);
-      expect(result).toBe("你好 接口 世界");
-    });
-
-    it("should return original text when no terms match", () => {
-      const result = glossaryManager.applyGlossary("No matches here", "zh", glossary);
-      expect(result).toBe("No matches here");
-    });
-
-    it("should handle empty glossary", () => {
-      const result = glossaryManager.applyGlossary("Hello", "zh", { zh: {} });
-      expect(result).toBe("Hello");
-    });
-
-    it("should handle missing language in glossary", () => {
-      const result = glossaryManager.applyGlossary("Hello", "unknown", glossary);
-      expect(result).toBe("Hello");
-    });
-
-    it("should preserve word boundaries", () => {
-      // "API" should match as whole word, not within "RAPID"
-      const result = glossaryManager.applyGlossary("RAPID API development", "zh", glossary);
-      expect(result).toBe("RAPID 接口 development");
-    });
-
-    it("should handle punctuation correctly", () => {
-      const result = glossaryManager.applyGlossary("Hello, World!", "zh", glossary);
-      expect(result).toBe("你好, 世界!");
-    });
-  });
+  // Note: applyGlossary method has been deprecated
+  // New glossary logic is in llmTranslate.ts - translateWithGlossary function
+  // Tests for the new logic are in llmTranslate.test.ts
 
   describe("Glossary Caching", () => {
     it("should cache loaded glossary and not reload on subsequent calls", async () => {
