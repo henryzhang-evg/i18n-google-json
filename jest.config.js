@@ -18,7 +18,7 @@ module.exports = {
     ],
   },
   transformIgnorePatterns: [
-    "node_modules/(?!(google-spreadsheet|ky)/)"
+    "node_modules/(?!(google-spreadsheet|ky|update-notifier)/)"
   ],
   extensionsToTreatAsEsm: ['.ts', '.tsx'],
   globals: {

@@ -20,6 +20,7 @@
 import type { I18nConfig } from "./types";
 import { I18nScanner } from "./core/I18nScanner";
 import { Logger } from "./utils/StringUtils";
+import { checkForUpdates } from "./utils/UpdateNotifier";
 import * as path from "path";
 
 // 从当前工作目录加载配置文件
@@ -29,6 +30,9 @@ const config: I18nConfig = require(configPath);
 const scanner = new I18nScanner(config);
 
 if (require.main === module) {
+  // 检查更新(异步执行,不阻塞主程序)
+  checkForUpdates();
+
   scanner.scan().catch((error) => {
     Logger.error("❌ 扫描失败:", error);
     process.exit(1);
