@@ -23,6 +23,9 @@ import { Logger } from "./utils/StringUtils";
 import { checkForUpdates } from "./utils/UpdateNotifier";
 import * as path from "path";
 
+// 从 package.json 读取版本号
+const { version } = require("../package.json");
+
 // 从当前工作目录加载配置文件
 const configPath = path.join(process.cwd(), "i18n.config.js");
 const config: I18nConfig = require(configPath);
@@ -30,6 +33,9 @@ const config: I18nConfig = require(configPath);
 const scanner = new I18nScanner(config);
 
 if (require.main === module) {
+  // 输出版本号
+  Logger.info(`🚀 i18n-google v${version}`);
+
   // 检查更新(异步执行,不阻塞主程序)
   checkForUpdates();
 
