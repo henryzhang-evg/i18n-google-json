@@ -20,10 +20,9 @@ export class GoogleSheetsSync {
    * 从 Google Sheets 同步 CompleteTranslationRecord
    */
   public async syncCompleteRecordFromSheet(): Promise<CompleteTranslationRecord> {
-    if (!this.sheetsClient.isReady()) {
-      Logger.info("🔄 Google Sheets 未初始化，返回空翻译");
-      return {};
-    }
+    // 注意：不能只检查 isReady()，因为初始化是异步的
+    // 必须等待 readSheet 中的 ensureInitialized() 完成
+    // 所以我们直接调用 readSheet，它会自动等待初始化
 
     try {
       // 使用配置的固定范围避免过滤器干扰
@@ -40,6 +39,7 @@ export class GoogleSheetsSync {
 
       const rows = sheetData.values;
       const headers = sheetData.headers;
+
       const langIndices = new Map<string, number>();
       const completeRecord: CompleteTranslationRecord = {};
 
@@ -129,6 +129,7 @@ export class GoogleSheetsSync {
           Object.keys(completeRecord).length
         } 个模块的翻译数据`
       );
+
       return completeRecord;
     } catch (error) {
       Logger.error("❌ 从 Google Sheets 同步失败:", error);
@@ -227,10 +228,8 @@ export class GoogleSheetsSync {
     completeRecord: CompleteTranslationRecord,
     deletedKeys: string[] = []
   ): Promise<void> {
-    if (!this.sheetsClient.isReady()) {
-      Logger.info("🔄 Google Sheets 未初始化，跳过同步");
-      return;
-    }
+    // 注意：不再提前检查 isReady()，因为初始化是异步的
+    // writeSheet 和 readSheet 会自动等待初始化完成
 
     try {
       Logger.info("🔄 开始同步到 Google Sheets，先拉取远端最新数据...");

@@ -515,7 +515,7 @@ describe("Unused Key Deletion and Sync Workflow", () => {
     }, 10000);
 
     it("should handle no unused keys scenario", async () => {
-      // All keys are currently in use
+      // All keys are currently in use - use matching file paths
       const allUsedReferences = new Map<string, ExistingReference[]>([
         [
           "Hello",
@@ -541,14 +541,14 @@ describe("Unused Key Deletion and Sync Workflow", () => {
             },
           ],
         ],
-        // Include all previously "unused" keys as used
+        // Include all previously "unused" keys as used with correct file paths
         [
           "UnusedKey1",
           [
             {
               key: "UnusedKey1",
-              filePath: "src/test.tsx",
-              lineNumber: 1,
+              filePath: "src/components/Header.tsx",
+              lineNumber: 10,
               columnNumber: 1,
               callExpression: "I18n.t('UnusedKey1')",
             },
@@ -559,8 +559,8 @@ describe("Unused Key Deletion and Sync Workflow", () => {
           [
             {
               key: "UnusedKey2",
-              filePath: "src/test.tsx",
-              lineNumber: 2,
+              filePath: "src/components/Header.tsx",
+              lineNumber: 15,
               columnNumber: 1,
               callExpression: "I18n.t('UnusedKey2')",
             },
@@ -571,8 +571,8 @@ describe("Unused Key Deletion and Sync Workflow", () => {
           [
             {
               key: "UnusedKey3",
-              filePath: "src/test.tsx",
-              lineNumber: 3,
+              filePath: "src/components/Footer.tsx",
+              lineNumber: 12,
               columnNumber: 1,
               callExpression: "I18n.t('UnusedKey3')",
             },
@@ -583,8 +583,8 @@ describe("Unused Key Deletion and Sync Workflow", () => {
           [
             {
               key: "UnusedKey4",
-              filePath: "src/test.tsx",
-              lineNumber: 4,
+              filePath: "src/pages/Home.tsx",
+              lineNumber: 20,
               columnNumber: 1,
               callExpression: "I18n.t('UnusedKey4')",
             },
@@ -595,8 +595,8 @@ describe("Unused Key Deletion and Sync Workflow", () => {
           [
             {
               key: "UnusedKey5",
-              filePath: "src/test.tsx",
-              lineNumber: 5,
+              filePath: "src/pages/Home.tsx",
+              lineNumber: 25,
               columnNumber: 1,
               callExpression: "I18n.t('UnusedKey5')",
             },

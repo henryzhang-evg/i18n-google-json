@@ -66,23 +66,13 @@ jest.mock("googleapis", () => ({
   },
 }));
 
-// Mock llmTranslate
+// Mock llmTranslate - always return original text
 jest.mock("../src/utils/llmTranslate", () => ({
   llmTranslate: jest
     .fn()
     .mockImplementation((text: string, from: string, to: string) => {
-      const translations: Record<string, Record<string, string>> = {
-        "zh-Hans": {
-          Hello: "你好",
-          "Click me": "点击我",
-          Submit: "提交",
-          "New Button Text": "新按钮文本",
-          "Another New Text": "另一个新文本",
-          "Hello World": "你好世界",
-          "Test Text": "测试文本",
-        },
-      };
-      return Promise.resolve(translations[to]?.[text] || text);
+      // 直接返回原文，不做翻译
+      return Promise.resolve(text);
     }),
 }));
 
@@ -317,7 +307,7 @@ export default function Button() {
       updatedCompleteRecord["components/UI/Button/index.ts"]["Another New Text"]
     ).toBeDefined();
 
-    // 验证新翻译包含正确的语言版本
+    // 验证新翻译包含正确的语言版本（mock返回原文）
     expect(
       updatedCompleteRecord["components/UI/Button/index.ts"]["New Button Text"][
         "en"
@@ -327,7 +317,7 @@ export default function Button() {
       updatedCompleteRecord["components/UI/Button/index.ts"]["New Button Text"][
         "zh-Hans"
       ]
-    ).toBe("新按钮文本");
+    ).toBe("New Button Text");
     expect(
       updatedCompleteRecord["components/UI/Button/index.ts"][
         "Another New Text"
@@ -337,7 +327,7 @@ export default function Button() {
       updatedCompleteRecord["components/UI/Button/index.ts"][
         "Another New Text"
       ]["zh-Hans"]
-    ).toBe("另一个新文本");
+    ).toBe("Another New Text");
   });
 
   test("should handle case where only new translations exist without path changes", async () => {

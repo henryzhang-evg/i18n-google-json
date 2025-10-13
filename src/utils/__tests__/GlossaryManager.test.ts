@@ -1,33 +1,25 @@
+// Mock GoogleSheetsClient - must be before imports
+const mockIsReady = jest.fn();
+const mockReadSheet = jest.fn();
+
+jest.mock("../GoogleSheetsClient", () => ({
+  GoogleSheetsClient: jest.fn().mockImplementation(() => ({
+    isReady: mockIsReady,
+    readSheet: mockReadSheet,
+  })),
+}));
+
 import { GlossaryManager } from "../GlossaryManager";
-import { GoogleSpreadsheet } from "google-spreadsheet";
 import type { I18nConfig } from "../../types";
 
-// Mock Google Sheets
-jest.mock("google-spreadsheet");
-const MockedGoogleSpreadsheet = GoogleSpreadsheet as jest.MockedClass<typeof GoogleSpreadsheet>;
-
 describe("GlossaryManager", () => {
-  let mockDoc: jest.Mocked<GoogleSpreadsheet>;
-  let mockSheet: any;
   let glossaryManager: GlossaryManager;
+  let config: I18nConfig;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
-    mockSheet = {
-      getRows: jest.fn(),
-      loadHeaderRow: jest.fn(),
-    };
-    
-    mockDoc = {
-      loadInfo: jest.fn(),
-      sheetsByIndex: [mockSheet],
-      get sheetsByTitle() { return { "terms": mockSheet }; },
-    } as any;
 
-    MockedGoogleSpreadsheet.mockImplementation(() => mockDoc);
-
-    const config: I18nConfig = {
+    config = {
       rootDir: "./test",
       ignore: ["**/node_modules/**"],
       spreadsheetId: "test-spreadsheet-id",
@@ -43,38 +35,30 @@ describe("GlossaryManager", () => {
       apiKey: "test-api-key"
     };
 
+    // Default mock setup - GoogleSheets client is ready
+    mockIsReady.mockReturnValue(true);
+    mockReadSheet.mockResolvedValue({
+      headers: [],
+      values: [],
+    });
+
     glossaryManager = new GlossaryManager(config);
   });
 
   describe("Glossary Loading", () => {
     it("should load glossary from Google Sheets successfully", async () => {
-      const mockRows = [
-        {
-          en: "Hello",
-          zh: "你好",
-          es: "Hola",
-          ko: "안녕하세요",
-          vi: "Xin chào",
-          tr: "Merhaba",
-          fr: "Bonjour",
-        },
-        {
-          en: "Login",
-          zh: "登录",
-          es: "Iniciar sesión",
-          ko: "로그인",
-          vi: "Đăng nhập",
-          tr: "Giriş yap",
-          fr: "Se connecter",
-        },
-      ];
-
-      mockSheet.getRows.mockResolvedValueOnce(mockRows);
+      mockReadSheet.mockResolvedValueOnce({
+        headers: ["en", "zh", "es", "ko", "vi", "tr", "fr"],
+        values: [
+          ["en", "zh", "es", "ko", "vi", "tr", "fr"], // header row
+          ["Hello", "你好", "Hola", "안녕하세요", "Xin chào", "Merhaba", "Bonjour"],
+          ["Login", "登录", "Iniciar sesión", "로그인", "Đăng nhập", "Giriş yap", "Se connecter"],
+        ],
+      });
 
       const glossary = await glossaryManager.loadGlossary();
 
-      expect(mockDoc.loadInfo).toHaveBeenCalled();
-      expect(mockSheet.getRows).toHaveBeenCalled();
+      expect(mockReadSheet).toHaveBeenCalled();
 
       // Verify glossary structure
       expect(glossary.zh).toEqual({
@@ -88,7 +72,10 @@ describe("GlossaryManager", () => {
     });
 
     it("should handle empty glossary gracefully", async () => {
-      mockSheet.getRows.mockResolvedValueOnce([]);
+      mockReadSheet.mockResolvedValueOnce({
+        headers: ["en", "zh"],
+        values: [["en", "zh"]], // Only header, no data
+      });
 
       const glossary = await glossaryManager.loadGlossary();
 
@@ -103,10 +90,10 @@ describe("GlossaryManager", () => {
     });
 
     it("should handle Google Sheets load errors", async () => {
-      mockDoc.loadInfo.mockRejectedValueOnce(new Error("Load failed"));
+      mockReadSheet.mockRejectedValueOnce(new Error("Load failed"));
 
       const glossary = await glossaryManager.loadGlossary();
-      
+
       expect(glossary).toEqual({
         zh: {},
         es: {},
@@ -118,15 +105,10 @@ describe("GlossaryManager", () => {
     });
 
     it("should handle missing sheet errors", async () => {
-      // Mock document with no sheets  
-      const emptyMockDoc = {
-        loadInfo: jest.fn().mockResolvedValueOnce(undefined),
-        get sheetsByTitle() { return {}; },
-      } as any;
-      MockedGoogleSpreadsheet.mockImplementationOnce(() => emptyMockDoc);
+      mockIsReady.mockReturnValue(false);
 
       const glossary = await glossaryManager.loadGlossary();
-      
+
       expect(glossary).toEqual({
         zh: {},
         es: {},
@@ -138,26 +120,15 @@ describe("GlossaryManager", () => {
     });
 
     it("should skip empty terms and translations", async () => {
-      const mockRows = [
-        {
-          en: "Hello",
-          zh: "你好",
-          es: "", // Empty translation
-          ko: "안녕하세요",
-        },
-        {
-          en: "", // Empty term
-          zh: "测试",
-          es: "Prueba",
-        },
-        {
-          en: "Valid",
-          zh: "有效",
-          es: "Válido",
-        },
-      ];
-
-      mockSheet.getRows.mockResolvedValueOnce(mockRows);
+      mockReadSheet.mockResolvedValueOnce({
+        headers: ["en", "zh", "es", "ko"],
+        values: [
+          ["en", "zh", "es", "ko"], // header row
+          ["Hello", "你好", "", "안녕하세요"], // Empty es translation
+          ["", "测试", "Prueba", ""], // Empty en term
+          ["Valid", "有效", "Válido", ""],
+        ],
+      });
 
       const glossary = await glossaryManager.loadGlossary();
 
@@ -248,38 +219,46 @@ describe("GlossaryManager", () => {
 
   describe("Glossary Caching", () => {
     it("should cache loaded glossary and not reload on subsequent calls", async () => {
-      const mockRows = [
-        {
-          en: "Test",
-          zh: "测试",
-        },
-      ];
-
-      mockSheet.getRows.mockResolvedValueOnce(mockRows);
+      mockReadSheet.mockResolvedValueOnce({
+        headers: ["en", "zh"],
+        values: [
+          ["en", "zh"],
+          ["Test", "测试"],
+        ],
+      });
 
       // First load
       const glossary1 = await glossaryManager.loadGlossary();
       // Second load (should use cache)
       const glossary2 = await glossaryManager.loadGlossary();
 
-      expect(mockSheet.getRows).toHaveBeenCalledTimes(1); // Should only call once
+      expect(mockReadSheet).toHaveBeenCalledTimes(1); // Should only call once
       expect(glossary1).toEqual(glossary2);
     });
 
     it("should force reload when requested", async () => {
-      const mockRows1 = [{ en: "Test1", zh: "测试1" }];
-      const mockRows2 = [{ en: "Test2", zh: "测试2" }];
-
-      mockSheet.getRows
-        .mockResolvedValueOnce(mockRows1)
-        .mockResolvedValueOnce(mockRows2);
+      mockReadSheet
+        .mockResolvedValueOnce({
+          headers: ["en", "zh"],
+          values: [
+            ["en", "zh"],
+            ["Test1", "测试1"],
+          ],
+        })
+        .mockResolvedValueOnce({
+          headers: ["en", "zh"],
+          values: [
+            ["en", "zh"],
+            ["Test2", "测试2"],
+          ],
+        });
 
       // First load
       const glossary1 = await glossaryManager.loadGlossary();
       // Force reload
       const glossary2 = await glossaryManager.loadGlossary(true);
 
-      expect(mockSheet.getRows).toHaveBeenCalledTimes(2);
+      expect(mockReadSheet).toHaveBeenCalledTimes(2);
       expect(glossary1.zh).toEqual({ "Test1": "测试1" });
       expect(glossary2.zh).toEqual({ "Test2": "测试2" });
     });
@@ -287,7 +266,7 @@ describe("GlossaryManager", () => {
 
   describe("Error Recovery", () => {
     it("should return empty glossary on network errors", async () => {
-      mockSheet.getRows.mockRejectedValueOnce(new Error("Network error"));
+      mockReadSheet.mockRejectedValueOnce(new Error("Network error"));
 
       const glossary = await glossaryManager.loadGlossary();
 
@@ -304,12 +283,12 @@ describe("GlossaryManager", () => {
 
     it("should log warnings on glossary load failures", async () => {
       const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
-      mockSheet.getRows.mockRejectedValueOnce(new Error("Load failed"));
+      mockReadSheet.mockRejectedValueOnce(new Error("Load failed"));
 
       await glossaryManager.loadGlossary();
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to load glossary")
+        expect.stringContaining("📚 [术语表]")
       );
 
       consoleSpy.mockRestore();

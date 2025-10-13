@@ -26,35 +26,6 @@ export class DeleteService {
   }
 
   /**
-   * 检查CompleteRecord中的key是否被强制保留
-   * 用于无用Key检测时的强制保留检查
-   */
-  private isKeyForceKeptInCompleteRecord(
-    key: string,
-    completeRecord: CompleteTranslationRecord
-  ): boolean {
-    if (!this.config.forceKeepKeys) {
-      return false;
-    }
-
-    // 在完整记录中查找包含该key的模块
-    for (const [modulePath, moduleKeys] of Object.entries(completeRecord)) {
-      if (moduleKeys[key]) {
-        // 检查该模块是否配置了强制保留该key
-        const forceKeepKeys = this.config.forceKeepKeys;
-        if (forceKeepKeys && modulePath in forceKeepKeys) {
-          const forceKeepList = forceKeepKeys[modulePath];
-          if (forceKeepList && forceKeepList.includes(key)) {
-            return true;
-          }
-        }
-      }
-    }
-
-    return false;
-  }
-
-  /**
    * 检测无用Key、确认删除并生成处理后的完整记录
    * @param allReferences 当前扫描发现的所有引用
    * @returns 处理结果
@@ -129,9 +100,7 @@ export class DeleteService {
       const { actualKeysToDelete, filteredFormattedKeys } =
         this.filterKeysByUserSelection(
           selectedKeysForDeletion,
-          unusedKeysAnalysis.filteredUnusedKeys,
-          formattedFilteredUnusedKeys,
-          existingCompleteRecord
+          formattedFilteredUnusedKeys
         );
 
       // 7. 生成删除预览
@@ -187,23 +156,18 @@ export class DeleteService {
   /**
    * 根据用户选择过滤要删除的Key
    * @param selectedFormattedKeys 用户选择的格式化Key列表
-   * @param allFilteredUnusedKeys 所有过滤后的无用Key
    * @param allFormattedKeys 所有格式化的Key列表
-   * @param existingCompleteRecord 现有完整记录
    * @returns 实际要删除的Key和过滤后的格式化Key
    */
   private filterKeysByUserSelection(
     selectedFormattedKeys: string[],
-    allFilteredUnusedKeys: string[],
-    allFormattedKeys: string[],
-    existingCompleteRecord: CompleteTranslationRecord
+    allFormattedKeys: string[]
   ): {
     actualKeysToDelete: string[];
     filteredFormattedKeys: string[];
   } {
     const selectedSet = new Set(selectedFormattedKeys);
 
-    // 现在 allFilteredUnusedKeys 与 allFormattedKeys 都是 [modulePath][key] 形式
     // 过滤格式化Key列表，只保留用户选择的
     const filteredFormattedKeys = allFormattedKeys.filter((key) =>
       selectedSet.has(key)
@@ -217,6 +181,7 @@ export class DeleteService {
       filteredFormattedKeys,
     };
   }
+
 
   /**
    * 分析无用Key
@@ -239,10 +204,6 @@ export class DeleteService {
     );
 
     // 2) 提取当前扫描到的所有 (modulePath, key) 对
-    // 为适配不同来源的路径格式（含/不含 rootDir、不同扩展名），
-    // 我们使用两种策略：
-    //  - A) 基于 PathUtils 转换
-    //  - B) 基于 existingCompleteRecord 中的模块路径做 endsWith 匹配
     const usedPairSet = new Set<string>(); // 使用格式: [modulePath][key]
 
     // 建立 key -> 模块路径列表 的索引，便于快速匹配
@@ -256,9 +217,10 @@ export class DeleteService {
       }
     );
 
-    // 收集“已使用”的 (modulePath,key) 对：先精确匹配，再 endsWith，最后按同名文件兜底
+    // 收集"已使用"的 (modulePath,key) 对：先精确匹配，再 endsWith，最后按同名文件兜底
     allReferences.forEach((refs, key) => {
       const candidates = keyToModulePaths.get(key) || [];
+
       refs.forEach((ref) => {
         const normalizedRef = ref.filePath.replace(/\.(tsx?|jsx?)$/, ".ts");
         const converted = PathUtils.convertFilePathToModulePath(
@@ -296,12 +258,9 @@ export class DeleteService {
           });
         }
 
-        // 4) 最终兜底：仍未匹配上时，将候选模块全部视为已用（测试场景下路径可能无法对应）
-        if (!matched && candidates.length > 0) {
-          candidates.forEach((modulePath) => {
-            usedPairSet.add(`[${modulePath}][${key}]`);
-          });
-        }
+        // 4) 移除 FALLBACK_MATCH_ALL，严格遵循模块 1:1 对应原则
+        // 翻译文件与组件应该是 1:1 对应的，如果无法匹配到对应模块，
+        // 说明该引用使用了错误的翻译文件或翻译文件缺失，不应标记任何候选模块为已使用
       });
     });
 

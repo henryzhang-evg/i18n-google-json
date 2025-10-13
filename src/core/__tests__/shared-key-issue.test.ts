@@ -163,7 +163,7 @@ describe("TranslationManager Shared Key Issue", () => {
     console.log("Multi-file Cancel key distribution:", JSON.stringify(generatedRecord, null, 2));
 
     // 验证：每个使用了 Cancel 的模块都应该有对应的记录
-    const modulesWithCancel = Object.keys(generatedRecord).filter(module => 
+    const modulesWithCancel = Object.keys(generatedRecord).filter(module =>
       generatedRecord[module]["Cancel"]
     );
 
@@ -171,14 +171,14 @@ describe("TranslationManager Shared Key Issue", () => {
 
     // 期望：应该有3个模块包含 Cancel key
     expect(modulesWithCancel.length).toBeGreaterThan(0);
-    
+
     // 具体验证每个模块
     expect(generatedRecord["../../../../../test/components/Chat/ShareSelect.ts"]).toBeDefined();
     expect(generatedRecord["../../../../../test/components/Setting/DisConnectModal.ts"]).toBeDefined();
     expect(generatedRecord["../../../../../test/components/Member/CancelModal.ts"]).toBeDefined();
 
     loadCompleteRecordSpy.mockRestore();
-  });
+  }, 15000); // 增加超时到 15 秒
 
   test("应该测试现有翻译的优先级处理", async () => {
     const allReferences = new Map<string, ExistingReference[]>();

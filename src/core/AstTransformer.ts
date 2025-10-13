@@ -408,10 +408,26 @@ export class AstTransformer {
     filePath: string,
     results: TransformResult[]
   ): void {
-    // 首先处理包含混合内容的JSX元素
-    const processedElements = new Set<n.JSXElement>();
+    // 收集所有JSX元素并计算深度
+    const elementPaths: Array<{ path: ASTPath<n.JSXElement>; depth: number }> = [];
 
     root.find(j.JSXElement).forEach((path: ASTPath<n.JSXElement>) => {
+      const depth = this.getNodeDepth(path);
+      elementPaths.push({ path, depth });
+    });
+
+    // 按深度排序：浅层优先（从外向内处理）
+    elementPaths.sort((a, b) => a.depth - b.depth);
+
+    // 首先处理包含混合内容的JSX元素（从外向内）
+    const processedElements = new Set<n.JSXElement>();
+
+    for (const { path } of elementPaths) {
+      // 跳过已处理元素的子元素
+      if (this.isChildOfProcessedElement(path, processedElements)) {
+        continue;
+      }
+
       const mixedResult = this.handleJSXMixedContent(path, filePath, j);
       if (mixedResult) {
         results.push(mixedResult.translationResult);
@@ -421,21 +437,27 @@ export class AstTransformer {
         );
         path.node.children = [jsxExpr];
         processedElements.add(path.node);
+
+        // 标记所有子JSX元素为已处理，防止它们内部的文本被单独提取
+        this.markAllChildElementsAsProcessed(path.node, processedElements);
       }
-    });
+    }
 
     // 然后处理纯文本节点（跳过已经处理过的元素中的文本）
     root.find(j.JSXText).forEach((path: ASTPath<n.JSXText>) => {
-      // 检查是否在已处理的元素中
-      let parentElement = path.parent;
-      while (parentElement && !n.JSXElement.check(parentElement.node)) {
-        parentElement = parentElement.parent;
+      // 检查是否在已处理的元素中（检查所有祖先元素，不仅仅是直接父元素）
+      let current = path.parent;
+      let isInProcessedElement = false;
+
+      while (current) {
+        if (n.JSXElement.check(current.node) && processedElements.has(current.node as n.JSXElement)) {
+          isInProcessedElement = true;
+          break;
+        }
+        current = current.parent;
       }
 
-      if (
-        parentElement &&
-        processedElements.has(parentElement.node as n.JSXElement)
-      ) {
+      if (isInProcessedElement) {
         return; // 跳过已处理的元素中的文本
       }
 
@@ -445,6 +467,59 @@ export class AstTransformer {
         this.replaceWithI18nCall(path, textResult.callExpr, j);
       }
     });
+  }
+
+  /**
+   * 计算AST节点的深度
+   */
+  private getNodeDepth(path: ASTPath<any>): number {
+    let depth = 0;
+    let current = path.parent;
+    while (current) {
+      depth++;
+      current = current.parent;
+    }
+    return depth;
+  }
+
+  /**
+   * 检查元素是否是已处理元素的子元素
+   */
+  private isChildOfProcessedElement(
+    path: ASTPath<n.JSXElement>,
+    processedElements: Set<n.JSXElement>
+  ): boolean {
+    let current = path.parent;
+    while (current) {
+      if (n.JSXElement.check(current.node) && processedElements.has(current.node as n.JSXElement)) {
+        return true;
+      }
+      current = current.parent;
+    }
+    return false;
+  }
+
+  /**
+   * 递归标记元素的所有子JSX元素为已处理
+   */
+  private markAllChildElementsAsProcessed(
+    element: n.JSXElement,
+    processedElements: Set<n.JSXElement>
+  ): void {
+    const children = element.children || [];
+    for (const child of children) {
+      if (n.JSXElement.check(child)) {
+        processedElements.add(child);
+        // 递归处理嵌套的子元素
+        this.markAllChildElementsAsProcessed(child, processedElements);
+      } else if (n.JSXExpressionContainer.check(child) && child.expression) {
+        // 如果表达式容器中有JSX元素，也要标记
+        if (n.JSXElement.check(child.expression)) {
+          processedElements.add(child.expression);
+          this.markAllChildElementsAsProcessed(child.expression, processedElements);
+        }
+      }
+    }
   }
 
   /**
@@ -568,11 +643,12 @@ export class AstTransformer {
       }
     }
 
+
     // 检查整体文本是否需要翻译（包含标记符号）
     // 修复：不仅检查完整标记，还要检查分布在多个节点的标记
     const startsWithMarker = fullText.trimStart().startsWith(this.config.startMarker);
     const endsWithMarker = fullText.trimEnd().endsWith(this.config.endMarker);
-    
+
     if (!startsWithMarker || !endsWithMarker) {
       return null;
     }
@@ -605,10 +681,15 @@ export class AstTransformer {
         // 处理JSX元素（HTML标签或React组件）- 使用平铺方式处理嵌套
         const flattenResult = this.flattenJSXElement(child, elementIndex, varIndex, j);
         translationText += flattenResult.text;
-        
+
+        // 检查元素内容是否包含英文
+        if (!hasEnglishContent && StringUtils.containsEnglishCharacters(flattenResult.text)) {
+          hasEnglishContent = true;
+        }
+
         // 合并插值选项
         Object.assign(interpolationOptions, flattenResult.options);
-        
+
         // 更新索引
         elementIndex += flattenResult.elementCount;
         varIndex += flattenResult.varCount;
@@ -619,6 +700,7 @@ export class AstTransformer {
     if (!hasEnglishContent) {
       return null;
     }
+
 
     // 应用格式化和清理（先去除标记符号，再清理空格等）
     // 对于JSX混合内容，需要特殊处理标记符号的清理

@@ -6,7 +6,11 @@
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(mkdir:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npm run scan:*)",
+      "Bash(tee:*)",
+      "Bash(cat:*)",
+      "Bash(git ls-tree:*)"
     ],
     "deny": []
   }
