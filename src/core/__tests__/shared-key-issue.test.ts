@@ -5,6 +5,10 @@ import fs from "fs";
 import path from "path";
 import { jest } from "@jest/globals";
 
+jest.mock("../../utils/llmTranslate", () => ({
+  translateWithGlossary: jest.fn(async (text: string) => text),
+}));
+
 describe("TranslationManager Shared Key Issue", () => {
   let translationManager: TranslationManager;
   let config: I18nConfig;
@@ -25,7 +29,7 @@ describe("TranslationManager Shared Key Issue", () => {
       ignore: ["**/node_modules/**"],
       startMarker: "~",
       endMarker: "~",
-      logLevel: "verbose",
+      logLevel: "silent",
       spreadsheetId: "test-id",
       sheetName: "test-sheet",
       keyFile: "test-key.json",
@@ -41,6 +45,12 @@ describe("TranslationManager Shared Key Issue", () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  const findModulePathBySuffix = (
+    generatedRecord: Record<string, any>,
+    suffix: string
+  ): string | undefined =>
+    Object.keys(generatedRecord).find((modulePath) => modulePath.endsWith(suffix));
 
   test("应该复现共享Key在多个模块中的处理问题", async () => {
     // 模拟场景：
@@ -107,18 +117,27 @@ describe("TranslationManager Shared Key Issue", () => {
 
     const generatedRecord = JSON.parse(fs.readFileSync(completeRecordPath, "utf-8"));
     
-    console.log("Generated Complete Record:", JSON.stringify(generatedRecord, null, 2));
-
     // 验证问题：
     // 1. DisConnectModal 模块应该存在
-    expect(generatedRecord["../../../../../test/components/Setting/DisConnectModal.ts"]).toBeDefined();
+    const disConnectModalPath = findModulePathBySuffix(
+      generatedRecord,
+      "components/Setting/DisConnectModal.ts"
+    );
+    const shareSelectPath = findModulePathBySuffix(
+      generatedRecord,
+      "components/Chat/ShareSelect.ts"
+    );
+    if (!disConnectModalPath || !shareSelectPath) {
+      throw new Error("未找到预期模块路径");
+    }
+    expect(generatedRecord[disConnectModalPath]).toBeDefined();
     
     // 2. DisConnectModal 模块应该包含 Cancel 和 Confirm 的翻译
-    expect(generatedRecord["../../../../../test/components/Setting/DisConnectModal.ts"]["Cancel"]).toBeDefined();
-    expect(generatedRecord["../../../../../test/components/Setting/DisConnectModal.ts"]["Confirm"]).toBeDefined();
+    expect(generatedRecord[disConnectModalPath]["Cancel"]).toBeDefined();
+    expect(generatedRecord[disConnectModalPath]["Confirm"]).toBeDefined();
 
     // 3. 同时 ShareSelect 模块也应该保留 Cancel 翻译
-    expect(generatedRecord["../../../../../test/components/Chat/ShareSelect.ts"]["Cancel"]).toBeDefined();
+    expect(generatedRecord[shareSelectPath]["Cancel"]).toBeDefined();
 
     loadCompleteRecordSpy.mockRestore();
   });
@@ -160,22 +179,27 @@ describe("TranslationManager Shared Key Issue", () => {
     const completeRecordPath = path.join(tempDir, "i18n-complete-record.json");
     const generatedRecord = JSON.parse(fs.readFileSync(completeRecordPath, "utf-8"));
 
-    console.log("Multi-file Cancel key distribution:", JSON.stringify(generatedRecord, null, 2));
-
     // 验证：每个使用了 Cancel 的模块都应该有对应的记录
     const modulesWithCancel = Object.keys(generatedRecord).filter(module =>
       generatedRecord[module]["Cancel"]
     );
 
-    console.log("Modules containing Cancel key:", modulesWithCancel);
-
     // 期望：应该有3个模块包含 Cancel key
     expect(modulesWithCancel.length).toBeGreaterThan(0);
 
     // 具体验证每个模块
-    expect(generatedRecord["../../../../../test/components/Chat/ShareSelect.ts"]).toBeDefined();
-    expect(generatedRecord["../../../../../test/components/Setting/DisConnectModal.ts"]).toBeDefined();
-    expect(generatedRecord["../../../../../test/components/Member/CancelModal.ts"]).toBeDefined();
+    expect(
+      findModulePathBySuffix(generatedRecord, "components/Chat/ShareSelect.ts")
+    ).toBeDefined();
+    expect(
+      findModulePathBySuffix(
+        generatedRecord,
+        "components/Setting/DisConnectModal.ts"
+      )
+    ).toBeDefined();
+    expect(
+      findModulePathBySuffix(generatedRecord, "components/Member/CancelModal.ts")
+    ).toBeDefined();
 
     loadCompleteRecordSpy.mockRestore();
   }, 15000); // 增加超时到 15 秒
@@ -213,24 +237,16 @@ describe("TranslationManager Shared Key Issue", () => {
     const completeRecordPath = path.join(tempDir, "i18n-complete-record.json");
     const generatedRecord = JSON.parse(fs.readFileSync(completeRecordPath, "utf-8"));
 
-    console.log("Priority handling result:", JSON.stringify(generatedRecord, null, 2));
-
     // 关键测试：验证 DisConnectModal 模块是否被正确创建
-    const hasDisConnectModalModule = "../../../../../test/components/Setting/DisConnectModal.ts" in generatedRecord;
+    const disConnectModalPath = findModulePathBySuffix(
+      generatedRecord,
+      "components/Setting/DisConnectModal.ts"
+    );
+    const hasDisConnectModalModule = Boolean(disConnectModalPath);
     const hasDisConnectModalCancel = hasDisConnectModalModule && 
-      "Cancel" in generatedRecord["../../../../../test/components/Setting/DisConnectModal.ts"];
-
-    console.log("DisConnectModal module exists:", hasDisConnectModalModule);
-    console.log("DisConnectModal has Cancel:", hasDisConnectModalCancel);
-
-    // 这里应该会失败，复现问题
-    if (!hasDisConnectModalModule) {
-      console.error("❌ 问题复现：DisConnectModal 模块没有被创建");
-    }
-
-    if (!hasDisConnectModalCancel) {
-      console.error("❌ 问题复现：DisConnectModal 模块中没有 Cancel key");
-    }
+      "Cancel" in generatedRecord[disConnectModalPath!];
+    expect(hasDisConnectModalModule).toBe(true);
+    expect(hasDisConnectModalCancel).toBe(true);
 
     loadCompleteRecordSpy.mockRestore();
   });
