@@ -39,6 +39,9 @@ type JSCodeshiftCollection = ReturnType<JSCodeshiftAPI>;
  * 这是一个纯粹的转换逻辑模块，不包含文件 I/O 操作
  */
 export class AstTransformer {
+  private hookInjectionTargets = new WeakSet<n.FunctionDeclaration | n.FunctionExpression | n.ArrowFunctionExpression>();
+  private needsModuleI18nImport = false;
+
   constructor(private config: I18nConfig) {}
 
   /**
@@ -89,7 +92,11 @@ export class AstTransformer {
     if (existingReferences.length > 0 || newTranslations.length > 0) {
       // 重新解析转换后的代码进行导入管理
       const { root: finalRoot, j: finalJ } = this.parseSource(transformedCode);
-      this.unifiedImportManagement(finalJ, finalRoot, filePath, false);
+      if (!this.isCustomCallStrategyEnabled()) {
+        this.unifiedImportManagement(finalJ, finalRoot, filePath, false);
+      } else {
+        this.normalizeExistingUseTranslationPlacement(finalJ, finalRoot, filePath);
+      }
       const finalTransformedCode = finalRoot.toSource();
       
       return {
@@ -134,6 +141,8 @@ export class AstTransformer {
     filePath: string
   ): { results: TransformResult[]; transformedCode: string } {
     const results: TransformResult[] = [];
+    this.hookInjectionTargets = new WeakSet();
+    this.needsModuleI18nImport = false;
 
     // 查找需要翻译的字符串字面量（带标记符号）
     this.transformStringLiterals(root, j, filePath, results);
@@ -144,9 +153,13 @@ export class AstTransformer {
     // 查找需要翻译的JSX文本节点（纯文本）
     this.transformJSXTextNodes(root, j, filePath, results);
 
-    // 添加模块化导入
+    // 添加导入与初始化
     if (results.length > 0) {
-      this.unifiedImportManagement(j, root, filePath, true);
+      if (this.isCustomCallStrategyEnabled()) {
+        this.applyCustomCallStrategyImportsAndInits(j, root, filePath);
+      } else {
+        this.unifiedImportManagement(j, root, filePath, true);
+      }
     }
 
     const transformedCode = root.toSource();
@@ -165,7 +178,7 @@ export class AstTransformer {
     const references: ExistingReference[] = [];
     root.find(j.CallExpression).forEach((path: ASTPath<n.CallExpression>) => {
       const callExpr = path.node;
-      if (!this.isI18nTCall(callExpr)) return;
+      if (!this.isTranslationCall(callExpr)) return;
       const keyArg = callExpr.arguments[0];
       if (n.Literal.check(keyArg) && typeof keyArg.value === "string") {
         const key = keyArg.value;
@@ -176,7 +189,7 @@ export class AstTransformer {
             filePath,
             lineNumber: loc.start.line,
             columnNumber: loc.start.column,
-            callExpression: `I18n.t("${key}")`,
+            callExpression: this.getCallExpressionText(callExpr, key),
           });
         }
       } else if (n.TemplateLiteral.check(keyArg)) {
@@ -190,7 +203,7 @@ export class AstTransformer {
               filePath,
               lineNumber: loc.start.line,
               columnNumber: loc.start.column,
-              callExpression: `I18n.t(\`${key}\`)`,
+              callExpression: this.getCallExpressionText(callExpr, key),
             });
           }
         }
@@ -323,6 +336,39 @@ export class AstTransformer {
     return false;
   }
 
+  private isTranslationCall(callExpr: n.CallExpression): boolean {
+    if (this.isI18nTCall(callExpr)) return true;
+    if (
+      n.MemberExpression.check(callExpr.callee) &&
+      n.Identifier.check(callExpr.callee.object) &&
+      n.Identifier.check(callExpr.callee.property) &&
+      callExpr.callee.object.name === "i18n" &&
+      callExpr.callee.property.name === "t"
+    ) {
+      return true;
+    }
+    const strategy = this.config.translationCallStrategy;
+    if (!strategy) return false;
+    const callee = callExpr.callee;
+    if (!n.Identifier.check(callee)) return false;
+    const componentTranslator = strategy.component?.translatorName || "t";
+    return callee.name === componentTranslator;
+  }
+
+  private getCallExpressionText(callExpr: n.CallExpression, key: string): string {
+    if (n.MemberExpression.check(callExpr.callee)) {
+      const { object, property } = callExpr.callee;
+      if (n.Identifier.check(object) && n.Identifier.check(property)) {
+        return `${object.name}.${property.name}("${key}")`;
+      }
+      return `I18n.t("${key}")`;
+    }
+    if (n.Identifier.check(callExpr.callee)) {
+      return `${callExpr.callee.name}("${key}")`;
+    }
+    return `I18n.t("${key}")`;
+  }
+
   /**
    * 转换字符串字面量
    */
@@ -369,11 +415,11 @@ export class AstTransformer {
           this.config
         );
         const text = StringUtils.cleanExtractedText(formattedText);
-        const key = StringUtils.generateTranslationKey(filePath, text);
+        const key = this.generateTranslationKeyByStrategy(filePath, text);
         results.push({ key, text });
 
         // 创建 I18n.t 调用表达式
-        const callExpr = AstUtils.createI18nCall(key);
+        const callExpr = this.createCallExpressionByStrategy(path, key, undefined, j, filePath);
 
         // 替换节点
         this.replaceWithI18nCall(path, callExpr, j);
@@ -593,10 +639,10 @@ export class AstTransformer {
     }
 
     // JSX文本节点直接处理，不需要检查标记符号
-    const key = StringUtils.generateTranslationKey(filePath, cleanedText);
+    const key = this.generateTranslationKeyByStrategy(filePath, cleanedText);
 
     // 创建 I18n.t 调用
-    const callExpr = AstUtils.createI18nCall(key);
+    const callExpr = this.createCallExpressionByStrategy(path, key, undefined, j, filePath);
 
     return {
       translationResult: { key, text: cleanedText },
@@ -711,14 +757,14 @@ export class AstTransformer {
       return null;
     }
 
-    const key = StringUtils.generateTranslationKey(filePath, translationText);
+    const key = this.generateTranslationKeyByStrategy(filePath, translationText);
 
     // 构建 I18n.t 调用
     const optionsObj = Object.keys(interpolationOptions).length > 0 
       ? this.createObjectExpressionFromMap(interpolationOptions, j)
       : undefined;
 
-    const callExpr = AstUtils.createI18nCall(key, optionsObj);
+    const callExpr = this.createCallExpressionByStrategy(path, key, optionsObj, j, filePath);
 
     return {
       translationResult: { key, text: translationText },
@@ -746,10 +792,10 @@ export class AstTransformer {
 
     // 构建带占位符的翻译文本
     const translationText = this.buildTranslationText(node);
-    const key = StringUtils.generateTranslationKey(filePath, translationText);
+    const key = this.generateTranslationKeyByStrategy(filePath, translationText);
 
     // 构建 I18n.t 调用
-    const callExpr = this.buildI18nCall(node, key, j);
+    const callExpr = this.buildI18nCall(path, node, key, j, filePath);
 
     return {
       translationResult: { key, text: translationText },
@@ -805,9 +851,11 @@ export class AstTransformer {
    * 构建 I18n.t 调用表达式
    */
   private buildI18nCall(
+    path: ASTPath<n.TemplateLiteral>,
     node: n.TemplateLiteral,
     key: string,
-    j: JSCodeshiftAPI
+    j: JSCodeshiftAPI,
+    filePath: string
   ): n.CallExpression {
     const expressions = node.expressions || [];
 
@@ -823,7 +871,404 @@ export class AstTransformer {
     }
 
     // 创建 I18n.t 调用
-    return AstUtils.createI18nCall(key, optionsObj || undefined);
+    return this.createCallExpressionByStrategy(
+      path,
+      key,
+      optionsObj || undefined,
+      j,
+      filePath
+    );
+  }
+
+  private createCallExpressionByStrategy(
+    path: ASTPath<n.Node>,
+    key: string,
+    optionsObj: n.ObjectExpression | undefined,
+    j: JSCodeshiftAPI,
+    filePath: string
+  ): n.CallExpression {
+    const strategy = this.config.translationCallStrategy;
+    if (!strategy) {
+      return AstUtils.createI18nCall(key, optionsObj);
+    }
+    if (this.shouldUseComponentHook(path, filePath)) {
+      const fnPath = this.findNearestInjectableFunction(path);
+      if (fnPath) {
+        this.hookInjectionTargets.add(fnPath.node);
+      }
+      const args = optionsObj ? [j.literal(key), optionsObj] : [j.literal(key)];
+      return j.callExpression(j.identifier(strategy.component?.translatorName || "t"), args as any);
+    }
+    this.needsModuleI18nImport = true;
+    const args = this.buildModuleCallArgs(j, key, optionsObj, filePath);
+    return j.callExpression(
+      j.memberExpression(j.identifier("i18n"), j.identifier("t")),
+      args as any
+    );
+  }
+
+  private buildModuleCallArgs(
+    j: JSCodeshiftAPI,
+    key: string,
+    optionsObj: n.ObjectExpression | undefined,
+    filePath: string
+  ): (n.Expression | n.SpreadElement)[] {
+    if (!this.isNamespaceEnabled()) {
+      return optionsObj ? [j.literal(key), optionsObj] : [j.literal(key)];
+    }
+    const ns = this.getNamespaceForFile(filePath);
+    const nsProp = AstUtils.createProperty("ns", j.literal(ns) as any);
+    if (!optionsObj) {
+      return [j.literal(key), AstUtils.createObjectExpression([nsProp])];
+    }
+    const merged = AstUtils.createObjectExpression([
+      ...((optionsObj.properties || []) as any),
+      nsProp,
+    ]);
+    return [j.literal(key), merged];
+  }
+
+  private shouldUseComponentHook(path: ASTPath<n.Node>, filePath: string): boolean {
+    const strategy = this.config.translationCallStrategy;
+    if (!strategy?.component?.enabled) return false;
+    if (!/\.(tsx|jsx)$/i.test(filePath)) return false;
+    const fnPath = this.findNearestInjectableFunction(path);
+    if (!fnPath) return false;
+    return this.nodeContainsJsx(fnPath.node.body);
+  }
+
+  private findNearestInjectableFunction(
+    path: ASTPath<n.Node>
+  ): ASTPath<n.FunctionDeclaration | n.FunctionExpression | n.ArrowFunctionExpression> | null {
+    let current: ASTPath<any> | null = path;
+    while (current) {
+      if (
+        (n.FunctionDeclaration.check(current.node) ||
+          n.FunctionExpression.check(current.node) ||
+          n.ArrowFunctionExpression.check(current.node)) &&
+        n.BlockStatement.check((current.node as any).body)
+      ) {
+        return current as ASTPath<
+          n.FunctionDeclaration | n.FunctionExpression | n.ArrowFunctionExpression
+        >;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  private nodeContainsJsx(node: any): boolean {
+    if (!node || typeof node !== "object") return false;
+    if (node.type === "JSXElement" || node.type === "JSXFragment") return true;
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (this.nodeContainsJsx(item)) return true;
+        }
+      } else if (value && typeof value === "object" && this.nodeContainsJsx(value)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isCustomCallStrategyEnabled(): boolean {
+    return !!this.config.translationCallStrategy;
+  }
+
+  private isNamespaceEnabled(): boolean {
+    return !!this.config.translationCallStrategy?.namespace?.enabled;
+  }
+
+  private generateTranslationKeyByStrategy(filePath: string, text: string): string {
+    const nsCfg = this.config.translationCallStrategy?.namespace;
+    if (nsCfg?.enabled && nsCfg.shortKey) {
+      return StringUtils.generateShortTranslationKey(text);
+    }
+    return StringUtils.generateTranslationKey(filePath, text);
+  }
+
+  private getNamespaceForFile(filePath: string): string {
+    const modulePath = PathUtils.convertFilePathToModulePath(filePath, this.config);
+    return PathUtils.modulePathToLocaleNamespace(modulePath);
+  }
+
+  private applyCustomCallStrategyImportsAndInits(
+    j: JSCodeshiftAPI,
+    root: JSCodeshiftCollection,
+    filePath: string
+  ): void {
+    const strategy = this.config.translationCallStrategy;
+    if (!strategy) return;
+    if (strategy.component?.enabled && /\.(tsx|jsx)$/i.test(filePath)) {
+      this.ensureHookImport(j, root);
+      this.ensureHookInitialization(j, root, filePath);
+    }
+    const moduleEnabled = strategy.module?.enabled !== false;
+    if (moduleEnabled && this.needsModuleI18nImport) {
+      this.ensureModuleFunctionImport(j, root);
+    }
+  }
+
+  private ensureHookImport(j: JSCodeshiftAPI, root: JSCodeshiftCollection): void {
+    const strategy = this.config.translationCallStrategy;
+    if (!strategy?.component?.enabled) return;
+    const hookName = strategy.component.hookName || "useTranslation";
+    const importFrom = strategy.component.hookImportFrom || "react-i18next";
+    const hasImport = root.find(j.ImportDeclaration).some((path: ASTPath<n.ImportDeclaration>) => {
+      if (path.node.source.value !== importFrom) return false;
+      return !!path.node.specifiers?.some(
+        (spec) => n.ImportSpecifier.check(spec) && spec.imported.name === hookName
+      );
+    });
+    if (hasImport) return;
+    const importDecl = j.importDeclaration(
+      [j.importSpecifier(j.identifier(hookName))],
+      j.literal(importFrom)
+    );
+    root.get().node.program.body.unshift(importDecl);
+  }
+
+  private ensureHookInitialization(
+    j: JSCodeshiftAPI,
+    root: JSCodeshiftCollection,
+    filePath: string
+  ): void {
+    const strategy = this.config.translationCallStrategy;
+    if (!strategy?.component?.enabled) return;
+    const hookName = strategy.component.hookName || "useTranslation";
+    const translatorName = strategy.component.translatorName || "t";
+
+    root
+      .find(j.Function)
+      .forEach((path: ASTPath<n.Function>) => {
+        if (!this.hookInjectionTargets.has(path.node as any)) return;
+        if (!n.BlockStatement.check(path.node.body)) return;
+        const body = path.node.body.body;
+        // 将函数体中已有的 useTranslation t 声明上提到顶部，避免 t 在声明前使用
+        this.removeExistingTranslatorBindingsFromUseTranslation(
+          body,
+          hookName,
+          translatorName
+        );
+        const shorthandProp = j.property(
+          "init",
+          j.identifier(translatorName),
+          j.identifier(translatorName)
+        ) as any;
+        shorthandProp.shorthand = true;
+        const hookArgs = this.isNamespaceEnabled()
+          ? [j.literal(this.getNamespaceForFile(filePath))]
+          : [];
+        const initStmt = j.variableDeclaration("const", [
+          j.variableDeclarator(
+            j.objectPattern([
+              shorthandProp,
+            ]),
+            j.callExpression(j.identifier(hookName), hookArgs as any)
+          ),
+        ]);
+        body.unshift(initStmt as any);
+      });
+  }
+
+  /**
+   * 当文件已存在 useTranslation 声明但不在顶部时，统一上提到函数体顶部。
+   * 该逻辑用于“没有新增翻译”的场景，避免仅因顺序问题导致运行时报错。
+   */
+  private normalizeExistingUseTranslationPlacement(
+    j: JSCodeshiftAPI,
+    root: JSCodeshiftCollection,
+    filePath: string
+  ): void {
+    const strategy = this.config.translationCallStrategy;
+    if (!strategy?.component?.enabled) return;
+    if (!/\.(tsx|jsx)$/i.test(filePath)) return;
+    const hookName = strategy.component.hookName || "useTranslation";
+    const translatorName = strategy.component.translatorName || "t";
+
+    root.find(j.Function).forEach((path: ASTPath<n.Function>) => {
+      if (!n.BlockStatement.check(path.node.body)) return;
+      const body = path.node.body.body;
+      const hasExisting = this.hasExistingTranslatorBindingFromUseTranslation(
+        body,
+        hookName,
+        translatorName
+      );
+      if (!hasExisting) return;
+      this.removeExistingTranslatorBindingsFromUseTranslation(
+        body,
+        hookName,
+        translatorName
+      );
+      const shorthandProp = j.property(
+        "init",
+        j.identifier(translatorName),
+        j.identifier(translatorName)
+      ) as any;
+      shorthandProp.shorthand = true;
+      const hookArgs = this.isNamespaceEnabled()
+        ? [j.literal(this.getNamespaceForFile(filePath))]
+        : [];
+      const initStmt = j.variableDeclaration("const", [
+        j.variableDeclarator(
+          j.objectPattern([
+            shorthandProp,
+          ]),
+          j.callExpression(j.identifier(hookName), hookArgs as any)
+        ),
+      ]);
+      body.unshift(initStmt as any);
+    });
+  }
+
+  private hasExistingTranslatorBindingFromUseTranslation(
+    body: n.Statement[],
+    hookName: string,
+    translatorName: string
+  ): boolean {
+    return body.some((stmt) => {
+      if (!n.VariableDeclaration.check(stmt)) return false;
+      return stmt.declarations.some((decl) => {
+        if (!n.VariableDeclarator.check(decl)) return false;
+        if (!decl.init || !n.CallExpression.check(decl.init)) return false;
+        if (!n.Identifier.check(decl.init.callee) || decl.init.callee.name !== hookName)
+          return false;
+        if (!n.Pattern.check(decl.id)) return false;
+        return this.patternDeclaresBinding(decl.id, translatorName);
+      });
+    });
+  }
+
+  /**
+   * 删除函数体中已有的 `const { t } = useTranslation()`（含 t 的解构），
+   * 由调用方统一在顶部重新注入，确保声明顺序正确。
+   */
+  private removeExistingTranslatorBindingsFromUseTranslation(
+    body: n.Statement[],
+    hookName: string,
+    translatorName: string
+  ): void {
+    for (let i = body.length - 1; i >= 0; i--) {
+      const stmt = body[i];
+      if (!n.VariableDeclaration.check(stmt)) continue;
+      const retainedDecls: n.VariableDeclarator[] = [];
+      for (const decl of stmt.declarations) {
+        if (!n.VariableDeclarator.check(decl)) {
+          retainedDecls.push(decl as any);
+          continue;
+        }
+        if (!decl.init || !n.CallExpression.check(decl.init)) {
+          retainedDecls.push(decl);
+          continue;
+        }
+        if (!n.Identifier.check(decl.init.callee) || decl.init.callee.name !== hookName) {
+          retainedDecls.push(decl);
+          continue;
+        }
+        if (!n.Pattern.check(decl.id)) {
+          retainedDecls.push(decl);
+          continue;
+        }
+        // 只处理包含 translatorName 绑定的模式，其余保留
+        if (!this.patternDeclaresBinding(decl.id, translatorName)) {
+          retainedDecls.push(decl);
+          continue;
+        }
+      }
+      if (retainedDecls.length === 0) {
+        body.splice(i, 1);
+      } else {
+        stmt.declarations = retainedDecls;
+      }
+    }
+  }
+
+  /**
+   * ObjectPattern 内单条属性：Property / ObjectProperty（Babel/TSX 解构）/ RestElement
+   */
+  private objectPatternElementDeclaresBinding(prop: n.Node, name: string): boolean {
+    if (n.Property.check(prop) || n.ObjectProperty.check(prop)) {
+      const value = prop.value;
+      if (n.Identifier.check(value) && value.name === name) {
+        return true;
+      }
+      if (n.AssignmentPattern.check(value)) {
+        if (n.Identifier.check(value.left) && value.left.name === name) {
+          return true;
+        }
+        if (n.Pattern.check(value.left) && this.patternDeclaresBinding(value.left, name)) {
+          return true;
+        }
+      }
+      if (n.ObjectPattern.check(value) || n.ArrayPattern.check(value)) {
+        if (this.patternDeclaresBinding(value, name)) return true;
+      }
+      return false;
+    }
+    if (n.RestElement.check(prop) && prop.argument) {
+      if (n.Identifier.check(prop.argument) && prop.argument.name === name) {
+        return true;
+      }
+      if (n.ObjectPattern.check(prop.argument) || n.ArrayPattern.check(prop.argument)) {
+        if (this.patternDeclaresBinding(prop.argument as n.Pattern, name)) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 解构/变量声明是否绑定了指定名称（如 const { t } = …、const t = …）
+   * 注意：@babel/parser + tsx 下对象解构常用 ObjectProperty，而非 Property。
+   */
+  private patternDeclaresBinding(pattern: n.Pattern, name: string): boolean {
+    if (n.Identifier.check(pattern)) {
+      return pattern.name === name;
+    }
+    if (n.ObjectPattern.check(pattern)) {
+      for (const prop of pattern.properties) {
+        if (this.objectPatternElementDeclaresBinding(prop, name)) {
+          return true;
+        }
+      }
+    }
+    if (n.ArrayPattern.check(pattern)) {
+      for (const el of pattern.elements) {
+        if (!el) continue;
+        if (n.RestElement.check(el)) {
+          if (n.Identifier.check(el.argument) && el.argument.name === name) return true;
+          if (n.ObjectPattern.check(el.argument) || n.ArrayPattern.check(el.argument)) {
+            if (this.patternDeclaresBinding(el.argument as n.Pattern, name)) return true;
+          }
+        } else if (n.Pattern.check(el) && this.patternDeclaresBinding(el, name)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private ensureModuleFunctionImport(j: JSCodeshiftAPI, root: JSCodeshiftCollection): void {
+    const fnName = "i18n";
+    const importFrom = "@i18n";
+    const hasImport = root.find(j.ImportDeclaration).some((path: ASTPath<n.ImportDeclaration>) => {
+      if (path.node.source.value !== importFrom) return false;
+      return !!path.node.specifiers?.some((spec) => {
+        if (n.ImportDefaultSpecifier.check(spec)) {
+          return spec.local?.name === fnName;
+        }
+        if (n.ImportSpecifier.check(spec)) {
+          return spec.local?.name === fnName || spec.imported.name === fnName;
+        }
+        return false;
+      });
+    });
+    if (hasImport) return;
+    const importDecl = j.importDeclaration(
+      [j.importDefaultSpecifier(j.identifier(fnName))],
+      j.literal(importFrom)
+    );
+    root.get().node.program.body.unshift(importDecl);
   }
 
 

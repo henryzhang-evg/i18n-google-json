@@ -65,6 +65,20 @@ export class StringUtils {
   }
 
   /**
+   * 生成可读短 key（用于 namespace 模式）
+   * 例如："AI & Tech" -> "AI_Tech"
+   */
+  static generateShortTranslationKey(text: string): string {
+    const compact = text
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .replace(/_+/g, "_");
+    if (!compact) return "key";
+    if (/^[0-9]/.test(compact)) return `k_${compact}`;
+    return compact;
+  }
+
+  /**
    * 生成哈希翻译键（保留作为备用方法）
    * @param filePath - 文件路径
    * @param text - 待翻译文本
