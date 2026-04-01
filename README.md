@@ -4,6 +4,43 @@
 
 一个功能强大的国际化代码转换工具，提供从代码扫描到翻译管理的完整自动化流程。支持智能代码转换、模块化翻译管理、Google Sheets 同步和智能键清理等企业级功能。
 
+## 🆕 最新改动（2026-04）
+
+- **Namespace 转换策略**：支持在代码转换时按文件路径自动生成 namespace。
+- **TSX 组件分支**：可注入 `const { t } = useTranslation(namespace);`，并支持短 key（如 `AI_Tech`）。
+- **模块分支**：可转换为 `i18n.t("AI_Tech", { ns: "onboarding.screens.Step2MarketsTopicsScreen" })`。
+- **Locale JSON 输出模式**：
+  - `raw`：`{ "AI_Tech": "AI & Tech" }`
+  - `namespaced`（方案 B）：`{ "onboarding.screens.Step2MarketsTopicsScreen": { "AI_Tech": "AI & Tech" } }`
+- **输出控制**：新增 `generateModuleFiles`，可关闭 `outputDir` 下模块化 `.ts` 翻译文件输出，仅保留 JSON。
+- **Hook 声明顺序修复**：在 TSX 中会自动将 `useTranslation` 上提到函数顶部，并删除下方重复声明，避免 `Identifier 't' has already been declared` 与声明顺序问题。
+
+### 推荐配置（namespace + 方案 B JSON）
+
+```javascript
+module.exports = {
+  // ...
+  translationCallStrategy: {
+    component: {
+      enabled: true,
+      hookName: "useTranslation",
+      hookImportFrom: "react-i18next",
+      translatorName: "t",
+    },
+    module: {},
+    namespace: {
+      enabled: true,
+      shortKey: true,
+    },
+  },
+
+  generateModuleFiles: false,
+  localeJson: true,
+  localeJsonDir: "./locals",
+  localeJsonKeyMode: "namespaced",
+};
+```
+
 ## ✨ 核心特性
 
 ### 🔄 智能代码转换
@@ -113,6 +150,19 @@ module.exports = {
 
   // 高级配置
   logLevel: "normal", // silent | normal | verbose
+
+  // 🆕 翻译调用策略（可选）
+  // 组件文件（tsx/jsx）使用 useTranslation + t("key")
+  // 普通模块（ts/js）固定使用 i18n.t("key")
+  translationCallStrategy: {
+    component: {
+      enabled: true,
+      hookName: "useTranslation",
+      hookImportFrom: "react-i18next",
+      translatorName: "t",
+    },
+    module: {},
+  },
 };
 ```
 
@@ -209,6 +259,16 @@ forceKeepKeys: {
 | `concurrency` | number | `5`        | 并发处理数量                            |
 | `maxFileSize` | number | `1MB`      | 单文件最大处理大小                      |
 | `encoding`    | string | `"utf8"`   | 文件编码格式                            |
+
+### 🆕 翻译调用策略配置
+
+| 选项                                                         | 类型   | 默认值 | 说明 |
+| ------------------------------------------------------------ | ------ | ------ | ---- |
+| `translationCallStrategy.component.enabled`                  | bool   | `false`| 开启后，tsx/jsx 组件内转换为 `t("key")` |
+| `translationCallStrategy.component.hookName`                 | string | `useTranslation` | 组件中使用的 hook 名称 |
+| `translationCallStrategy.component.hookImportFrom`           | string | `react-i18next` | hook 导入来源 |
+| `translationCallStrategy.component.translatorName`           | string | `t` | 组件内调用函数名 |
+| `translationCallStrategy.module.enabled`                     | bool   | `true` | 普通模块固定转换为 `i18n.t("key")` 并自动插入 `import i18n from "@i18n"` |
 
 ### 日志级别说明
 

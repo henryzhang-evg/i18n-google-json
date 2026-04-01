@@ -10,6 +10,7 @@ import { translateWithGlossary } from "../utils/llmTranslate";
 import { GlossaryManager } from "../utils/GlossaryManager";
 import { Logger } from "../utils/StringUtils";
 import { TranslationOptions, GlossaryMap } from "../types";
+import { writeFlatLocaleJsonFiles } from "./LocaleJsonWriter";
 
 export interface TranslationMap {
   [key: string]: string;
@@ -89,7 +90,7 @@ export class TranslationManager {
    * 检查输出目录
    */
   private async checkOutputDir(): Promise<void> {
-    const dir = path.join(process.cwd(), this.config.outputDir);
+    const dir = this.getResolvedOutputDir();
     try {
       if (!fs.existsSync(dir)) {
         await fs.promises.mkdir(dir, { recursive: true });
@@ -130,10 +131,11 @@ export class TranslationManager {
     const completeRecord = await this.buildCompleteRecord(allReferences);
 
     // 确保输出目录存在
-    await fs.promises.mkdir(this.config.outputDir, { recursive: true });
+    const resolvedOutputDir = this.getResolvedOutputDir();
+    await fs.promises.mkdir(resolvedOutputDir, { recursive: true });
 
     const outputPath = path.join(
-      this.config.outputDir,
+      resolvedOutputDir,
       "i18n-complete-record.json"
     );
     const normalized = this.normalizeCompleteRecord(completeRecord);
@@ -556,16 +558,30 @@ export class TranslationManager {
     // 读取完整记录
     const completeRecord = await this.loadCompleteRecord();
 
-    // 生成模块文件
-    await this.generateModuleFilesFromRecord(completeRecord);
+    // 生成模块文件（可通过配置关闭）
+    if (this.config.generateModuleFiles !== false) {
+      await this.generateModuleFilesFromRecord(completeRecord);
+    }
+
+    if (this.config.localeJson !== false) {
+      const localeDir = this.config.localeJsonDir ?? "./locals";
+      const keyMode = this.config.localeJsonKeyMode ?? "raw";
+      await writeFlatLocaleJsonFiles(
+        localeDir,
+        completeRecord,
+        this.config.languages,
+        keyMode
+      );
+    }
   }
 
   /**
    * 加载完整记录文件
    */
   public async loadCompleteRecord(): Promise<CompleteTranslationRecord> {
+    const resolvedOutputDir = this.getResolvedOutputDir();
     const filePath = path.join(
-      this.config.outputDir,
+      resolvedOutputDir,
       "i18n-complete-record.json"
     );
 
@@ -621,7 +637,7 @@ export class TranslationManager {
     filePath: string;
   } {
     // modulePath 现在是完整的文件路径，如 "TestModular.ts" 或 "components/Header2.ts"
-    const fullFilePath = path.join(this.config.outputDir, modulePath);
+    const fullFilePath = path.join(this.getResolvedOutputDir(), modulePath);
     const targetDir = path.dirname(fullFilePath);
     const filePath = fullFilePath;
 
@@ -682,8 +698,9 @@ export class TranslationManager {
   async saveCompleteRecordDirect(
     completeRecord: CompleteTranslationRecord
   ): Promise<void> {
+    const resolvedOutputDir = this.getResolvedOutputDir();
     const outputPath = path.join(
-      this.config.outputDir,
+      resolvedOutputDir,
       "i18n-complete-record.json"
     );
     const normalized = this.normalizeCompleteRecord(completeRecord);
@@ -693,6 +710,16 @@ export class TranslationManager {
       "utf-8"
     );
 
+  }
+
+  /**
+   * 解析输出目录：
+   * - 空字符串时回退到当前工作目录，避免 mkdir('') 报错
+   * - 相对路径基于 cwd 解析为绝对路径
+   */
+  private getResolvedOutputDir(): string {
+    const raw = (this.config.outputDir || "").trim();
+    return path.resolve(process.cwd(), raw || ".");
   }
 
   /**

@@ -88,4 +88,13 @@ export class PathUtils {
     // src/components/Header.tsx -> src/components/Header
     return filePath.replace(/\.(tsx?|jsx?)$/, "");
   }
+
+  /**
+   * 模块路径转扁平 locale key 前缀：components/Header.ts → components.Header
+   */
+  static modulePathToLocaleNamespace(modulePath: string): string {
+    const normalized = modulePath.replace(/\\/g, "/");
+    const withoutExt = normalized.replace(/\.(tsx?|jsx?|ts|js)$/i, "");
+    return withoutExt.split("/").filter(Boolean).join(".");
+  }
 }
