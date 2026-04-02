@@ -72,6 +72,8 @@ export async function writeFlatLocaleJsonFiles(
       "utf-8"
     );
   }
+
+  await writeLocaleIndexFile(absRoot, languages, completeRecord);
 }
 
 function sortObjectDeep(input: any): any {
@@ -83,4 +85,51 @@ function sortObjectDeep(input: any): any {
       out[k] = sortObjectDeep(input[k]);
     });
   return out;
+}
+
+async function writeLocaleIndexFile(
+  absRoot: string,
+  languages: string[],
+  completeRecord: CompleteTranslationRecord
+): Promise<void> {
+  const imports = languages
+    .map((lang) => {
+      const varName = toImportVar(lang);
+      return `import ${varName} from './${lang}.json';`;
+    })
+    .join("\n");
+
+  const resourcesBody = languages
+    .map((lang) => {
+      const varName = toImportVar(lang);
+      return `  ${JSON.stringify(lang)}: ${varName},`;
+    })
+    .join("\n");
+
+  const namespaces = collectNamespaces(completeRecord);
+  const nsBody = namespaces.map((ns) => `  ${JSON.stringify(ns)},`).join("\n");
+
+  const content =
+    `${imports}\n\n` +
+    `export const I18N_GOOGLE_RESOURCES = {\n${resourcesBody}\n} as const;\n\n` +
+    `export const I18N_GOOGLE_NAMESPACES = [\n${nsBody}\n] as const;\n`;
+
+  await fs.promises.writeFile(path.join(absRoot, "index.ts"), content, "utf-8");
+}
+
+function toImportVar(language: string): string {
+  const normalized = language.replace(/[^a-zA-Z0-9_]/g, "_");
+  const safe = /^[0-9]/.test(normalized) ? `lang_${normalized}` : normalized;
+  return `locale_${safe}`;
+}
+
+function collectNamespaces(
+  completeRecord: CompleteTranslationRecord
+): string[] {
+  const set = new Set<string>();
+  Object.keys(completeRecord).forEach((modulePath) => {
+    const ns = PathUtils.modulePathToLocaleNamespace(modulePath);
+    if (ns) set.add(ns);
+  });
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }

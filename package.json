@@ -4,9 +4,10 @@
   "description": "I18n scanning system with Google Sheets integration",
   "main": "dist/scan.js",
   "bin": {
-    "i18n-google": "dist/scan.js"
+    "i18n-google-json": "bin/i18n-google-json.js"
   },
   "files": [
+    "bin/",
     "dist/",
     "README.md",
     "LICENSE"
@@ -29,7 +30,7 @@
   },
   "homepage": "https://github.com/947776795/i18n-google-json#readme",
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rm -rf dist && tsc && chmod +x bin/i18n-google-json.js",
     "scan": "node dist/scan.js",
     "dev": "ts-node scan.ts",
     "test": "jest",

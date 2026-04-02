@@ -59,6 +59,12 @@ describe("LocaleJsonWriter / PathUtils locale namespace", () => {
     );
     const parsed = JSON.parse(content);
     expect(parsed).toEqual({ Welcome: "Welcome" });
+    const index = await fs.promises.readFile(
+      path.join(localeDir, "index.ts"),
+      "utf-8"
+    );
+    expect(index).toContain("export const I18N_GOOGLE_RESOURCES");
+    expect(index).toContain('"en": locale_en');
   });
 
   test("writeFlatLocaleJsonFiles namespaced 模式写入嵌套 JSON", async () => {
@@ -80,5 +86,30 @@ describe("LocaleJsonWriter / PathUtils locale namespace", () => {
         AI_Tech: "AI & Tech",
       },
     });
+    const index = await fs.promises.readFile(
+      path.join(localeDir, "index.ts"),
+      "utf-8"
+    );
+    expect(index).toContain("export const I18N_GOOGLE_NAMESPACES");
+    expect(index).toContain(
+      '"onboarding.screens.Step2MarketsTopicsScreen"'
+    );
+  });
+
+  test("index.ts 支持带连字符语言代码导入变量", async () => {
+    const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "locales-"));
+    const record: CompleteTranslationRecord = {
+      "pages/home.ts": {
+        Welcome: { en: "Welcome", "zh-CN": "欢迎" },
+      },
+    };
+    const localeDir = path.join(tmp, "locals");
+    await writeFlatLocaleJsonFiles(localeDir, record, ["en", "zh-CN"], "raw");
+    const index = await fs.promises.readFile(
+      path.join(localeDir, "index.ts"),
+      "utf-8"
+    );
+    expect(index).toContain("import locale_zh_CN from './zh-CN.json';");
+    expect(index).toContain('"zh-CN": locale_zh_CN');
   });
 });
