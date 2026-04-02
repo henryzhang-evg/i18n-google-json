@@ -1,4 +1,4 @@
-# i18n-google
+# i18n-google-json
 
 🚀 **企业级国际化自动化解决方案**
 
@@ -12,6 +12,7 @@
 - **Locale JSON 输出模式**：
   - `raw`：`{ "AI_Tech": "AI & Tech" }`
   - `namespaced`（方案 B）：`{ "onboarding.screens.Step2MarketsTopicsScreen": { "AI_Tech": "AI & Tech" } }`
+- **locals 目录自动索引**：生成 `locals/index.ts`，导出 `I18N_GOOGLE_RESOURCES` 与 `I18N_GOOGLE_NAMESPACES`。
 - **输出控制**：新增 `generateModuleFiles`，可关闭 `outputDir` 下模块化 `.ts` 翻译文件输出，仅保留 JSON。
 - **Hook 声明顺序修复**：在 TSX 中会自动将 `useTranslation` 上提到函数顶部，并删除下方重复声明，避免 `Identifier 't' has already been declared` 与声明顺序问题。
 
@@ -96,10 +97,10 @@ module.exports = {
 
 ```bash
 # 全局安装
-npm install -g i18n-google
+npm install -g i18n-google-json
 
 # 项目安装
-npm install i18n-google
+npm install i18n-google-json
 ```
 
 ### 基础配置
@@ -162,7 +163,17 @@ module.exports = {
       translatorName: "t",
     },
     module: {},
+    namespace: {
+      enabled: true,
+      shortKey: true,
+    },
   },
+
+  // 输出控制
+  generateModuleFiles: false,         // 关闭 outputDir/*.ts 模块翻译文件
+  localeJson: true,                   // 生成 locals/{lang}.json
+  localeJsonDir: "./locals",          // locale 输出目录
+  localeJsonKeyMode: "namespaced",    // namespaced => 方案B嵌套结构
 };
 ```
 
@@ -170,10 +181,10 @@ module.exports = {
 
 ```bash
 # 运行扫描
-i18n-google
+i18n-google-json
 
 # 或通过 npx
-npx i18n-google
+npx i18n-google-json
 
 # 项目中使用
 npm run scan
@@ -269,6 +280,17 @@ forceKeepKeys: {
 | `translationCallStrategy.component.hookImportFrom`           | string | `react-i18next` | hook 导入来源 |
 | `translationCallStrategy.component.translatorName`           | string | `t` | 组件内调用函数名 |
 | `translationCallStrategy.module.enabled`                     | bool   | `true` | 普通模块固定转换为 `i18n.t("key")` 并自动插入 `import i18n from "@i18n"` |
+| `translationCallStrategy.namespace.enabled`                  | bool   | `false` | 开启后：组件注入 `useTranslation(namespace)`，模块调用追加 `{ ns }` |
+| `translationCallStrategy.namespace.shortKey`                 | bool   | `false` | 开启后 key 压缩为短 key（如 `AI & Tech -> AI_Tech`） |
+
+### 🆕 Locale 输出配置
+
+| 选项                    | 类型   | 默认值      | 说明 |
+| ----------------------- | ------ | ----------- | ---- |
+| `generateModuleFiles`   | bool   | `true`      | 是否生成 `outputDir` 下模块化 `.ts` 翻译文件 |
+| `localeJson`            | bool   | `true`      | 是否生成 `locals/{lang}.json` |
+| `localeJsonDir`         | string | `"./locals"`| locale 输出目录 |
+| `localeJsonKeyMode`     | string | `"raw"`     | `raw` 直接 key；`namespaced` 生成 namespace 嵌套对象（方案 B） |
 
 ### 日志级别说明
 
@@ -805,10 +827,10 @@ export default translations;
 
 ```bash
 # 全局安装后
-i18n-google
+i18n-google-json
 
 # 或通过 npx
-npx i18n-google
+npx i18n-google-json
 
 # 项目中使用
 npm run scan
@@ -822,7 +844,7 @@ npm run scan
 ┌───────────────────────────────────────────────────┐
 │                                                   │
 │   Update available 0.3.2 → 0.4.0                 │
-│   Run npm install -g i18n-google to update       │
+│   Run npm install -g i18n-google-json to update  │
 │                                                   │
 └───────────────────────────────────────────────────┘
 ```
@@ -831,7 +853,7 @@ npm run scan
 
 ```bash
 # 禁用更新检查（通过环境变量）
-NO_UPDATE_NOTIFIER=1 i18n-google
+NO_UPDATE_NOTIFIER=1 i18n-google-json
 
 # 或在 shell 配置文件中永久禁用
 export NO_UPDATE_NOTIFIER=1
@@ -846,7 +868,7 @@ export NO_UPDATE_NOTIFIER=1
 ### 编程使用
 
 ```typescript
-import { I18nScanner } from "i18n-google";
+import { I18nScanner } from "i18n-google-json";
 import config from "./i18n.config.js";
 
 const scanner = new I18nScanner(config);
@@ -972,7 +994,7 @@ jobs:
         run: npm ci
 
       - name: Run i18n scan
-        run: npx i18n-google
+        run: npx i18n-google-json
         env:
           GOOGLE_SHEETS_API_KEY: ${{ secrets.GOOGLE_SHEETS_API_KEY }}
 ```
@@ -1042,14 +1064,14 @@ Error: JavaScript heap out of memory
 logLevel: "verbose"
 
 // 或环境变量
-DEBUG=i18n-google:* npx i18n-google
+DEBUG=i18n-google-json:* npx i18n-google-json
 ```
 
 **2. 分步骤测试**
 
 ```bash
 # 只测试文件扫描
-i18n-google --dry-run
+i18n-google-json --dry-run
 
 # 只测试特定目录
 rootDir: "./src/components/Button"

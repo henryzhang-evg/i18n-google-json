@@ -33,7 +33,7 @@ describe("UpdateNotifier", () => {
       expect(mockedUpdateNotifier).toHaveBeenCalledWith(
         expect.objectContaining({
           pkg: expect.objectContaining({
-            name: "i18n-google",
+            name: "i18n-google-json",
           }),
           updateCheckInterval: 1000 * 60 * 60 * 24, // 24小时
         })
@@ -107,7 +107,7 @@ describe("UpdateNotifier", () => {
       expect(mockedUpdateNotifier).toHaveBeenCalledWith(
         expect.objectContaining({
           pkg: expect.objectContaining({
-            name: "i18n-google",
+            name: "i18n-google-json",
             version: expect.any(String),
           }),
         })

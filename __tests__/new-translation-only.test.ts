@@ -87,9 +87,11 @@ import type { I18nConfig } from "../src/types";
 
 describe("New Translation Only Test", () => {
   jest.setTimeout(30000); // 增加超时时间
+  const TEST_ROOT_DIR = "test-src-new-translation";
+  const TEST_OUTPUT_DIR = "test-translate-new-translation";
   const testConfig: I18nConfig = {
-    rootDir: "test-src",
-    outputDir: "test-translate",
+    rootDir: TEST_ROOT_DIR,
+    outputDir: TEST_OUTPUT_DIR,
     include: ["tsx", "ts"],
     ignore: ["node_modules", ".git"],
     languages: ["en", "zh-Hans"],
@@ -105,8 +107,8 @@ describe("New Translation Only Test", () => {
   beforeEach(() => {
     // 清理测试目录 - 使用 try-catch 处理权限问题
     try {
-      if (fs.existsSync("test-src")) {
-        fs.rmSync("test-src", { recursive: true, force: true, maxRetries: 3 });
+      if (fs.existsSync(TEST_ROOT_DIR)) {
+        fs.rmSync(TEST_ROOT_DIR, { recursive: true, force: true, maxRetries: 3 });
       }
     } catch (error) {
       // 忽略清理错误，允许测试继续
@@ -114,8 +116,8 @@ describe("New Translation Only Test", () => {
     }
 
     try {
-      if (fs.existsSync("test-translate")) {
-        fs.rmSync("test-translate", { recursive: true, force: true, maxRetries: 3 });
+      if (fs.existsSync(TEST_OUTPUT_DIR)) {
+        fs.rmSync(TEST_OUTPUT_DIR, { recursive: true, force: true, maxRetries: 3 });
       }
     } catch (error) {
       // 忽略清理错误，允许测试继续
@@ -163,17 +165,17 @@ describe("New Translation Only Test", () => {
 
   afterEach(() => {
     // 清理测试目录
-    if (fs.existsSync("test-src")) {
-      fs.rmSync("test-src", { recursive: true, force: true });
+    if (fs.existsSync(TEST_ROOT_DIR)) {
+      fs.rmSync(TEST_ROOT_DIR, { recursive: true, force: true });
     }
-    if (fs.existsSync("test-translate")) {
-      fs.rmSync("test-translate", { recursive: true, force: true });
+    if (fs.existsSync(TEST_OUTPUT_DIR)) {
+      fs.rmSync(TEST_OUTPUT_DIR, { recursive: true, force: true });
     }
   });
 
   test("should correctly extract new translations to complete record - simple case", async () => {
     // 创建包含新翻译的简单文件
-    fs.mkdirSync("test-src/components/Simple", { recursive: true });
+    fs.mkdirSync(`${TEST_ROOT_DIR}/components/Simple`, { recursive: true });
 
     const simpleFileContent = `
 import React from "react";
@@ -188,7 +190,7 @@ export default function Simple() {
 }
 `;
 
-    fs.writeFileSync("test-src/components/Simple/index.tsx", simpleFileContent);
+    fs.writeFileSync(`${TEST_ROOT_DIR}/components/Simple/index.tsx`, simpleFileContent);
 
     // 运行扫描
     const scanner = new I18nScanner(testConfig);
@@ -197,14 +199,14 @@ export default function Simple() {
     // 验证结果
     // 1. 检查转换后的文件
     const transformedContent = fs.readFileSync(
-      path.join(process.cwd(), "test-src/components/Simple/index.tsx"),
+      path.join(process.cwd(), `${TEST_ROOT_DIR}/components/Simple/index.tsx`),
       "utf-8"
     );
     console.log("=== 转换后的文件内容 ===");
     console.log(transformedContent);
 
     // 2. 检查生成的翻译文件
-    const translatePath = "test-translate/components/Simple/index.ts";
+    const translatePath = `${TEST_OUTPUT_DIR}/components/Simple/index.ts`;
     console.log(`=== 检查翻译文件是否存在: ${translatePath} ===`);
     console.log("存在:", fs.existsSync(translatePath));
 
@@ -215,48 +217,45 @@ export default function Simple() {
     }
 
     // 3. 检查完整记录
-    const completeRecordPath = "test-translate/i18n-complete-record.json";
+    const completeRecordPath = `${TEST_OUTPUT_DIR}/i18n-complete-record.json`;
     console.log(`=== 检查完整记录文件是否存在: ${completeRecordPath} ===`);
     console.log("存在:", fs.existsSync(completeRecordPath));
 
-    if (fs.existsSync(completeRecordPath)) {
-      const completeRecord = JSON.parse(
-        fs.readFileSync(completeRecordPath, "utf-8")
-      );
-      console.log("=== 完整记录内容 ===");
-      console.log(JSON.stringify(completeRecord, null, 2));
+    expect(fs.existsSync(completeRecordPath)).toBe(true);
+    const completeRecord = JSON.parse(
+      fs.readFileSync(completeRecordPath, "utf-8")
+    );
+    console.log("=== 完整记录内容 ===");
+    console.log(JSON.stringify(completeRecord, null, 2));
 
-      // 验证预期结果
-      expect(completeRecord["components/Simple/index.ts"]).toBeDefined();
-      expect(
-        completeRecord["components/Simple/index.ts"]["Hello World"]
-      ).toBeDefined();
-      expect(
-        completeRecord["components/Simple/index.ts"]["Test Text"]
-      ).toBeDefined();
+    // 验证预期结果
+    expect(completeRecord["components/Simple/index.ts"]).toBeDefined();
+    expect(
+      completeRecord["components/Simple/index.ts"]["Hello World"]
+    ).toBeDefined();
+    expect(
+      completeRecord["components/Simple/index.ts"]["Test Text"]
+    ).toBeDefined();
 
-      // 验证翻译内容（mock返回原文）
-      expect(
-        completeRecord["components/Simple/index.ts"]["Hello World"]["en"]
-      ).toBe("Hello World");
-      expect(
-        completeRecord["components/Simple/index.ts"]["Hello World"]["zh-Hans"]
-      ).toBe("Hello World");
-      expect(
-        completeRecord["components/Simple/index.ts"]["Test Text"]["en"]
-      ).toBe("Test Text");
-      expect(
-        completeRecord["components/Simple/index.ts"]["Test Text"]["zh-Hans"]
-      ).toBe("Test Text");
-    } else {
-      fail("完整记录文件未生成");
-    }
+    // 验证翻译内容（mock返回原文）
+    expect(
+      completeRecord["components/Simple/index.ts"]["Hello World"]["en"]
+    ).toBe("Hello World");
+    expect(
+      completeRecord["components/Simple/index.ts"]["Hello World"]["zh-Hans"]
+    ).toBe("Hello World");
+    expect(
+      completeRecord["components/Simple/index.ts"]["Test Text"]["en"]
+    ).toBe("Test Text");
+    expect(
+      completeRecord["components/Simple/index.ts"]["Test Text"]["zh-Hans"]
+    ).toBe("Test Text");
   });
 
   test("should correctly extract new translations - multiple files case", async () => {
     // 创建多个包含新翻译的文件
-    fs.mkdirSync("test-src/components/Button", { recursive: true });
-    fs.mkdirSync("test-src/components/Form", { recursive: true });
+    fs.mkdirSync(`${TEST_ROOT_DIR}/components/Button`, { recursive: true });
+    fs.mkdirSync(`${TEST_ROOT_DIR}/components/Form`, { recursive: true });
 
     const buttonFileContent = `
 import React from "react";
@@ -281,15 +280,15 @@ export default function Form() {
 }
 `;
 
-    fs.writeFileSync("test-src/components/Button/index.tsx", buttonFileContent);
-    fs.writeFileSync("test-src/components/Form/index.tsx", formFileContent);
+    fs.writeFileSync(`${TEST_ROOT_DIR}/components/Button/index.tsx`, buttonFileContent);
+    fs.writeFileSync(`${TEST_ROOT_DIR}/components/Form/index.tsx`, formFileContent);
 
     // 运行扫描
     const scanner = new I18nScanner(testConfig);
     await scanner.scan();
 
     // 验证结果
-    const completeRecordPath = "test-translate/i18n-complete-record.json";
+    const completeRecordPath = `${TEST_OUTPUT_DIR}/i18n-complete-record.json`;
     expect(fs.existsSync(completeRecordPath)).toBe(true);
 
     const completeRecord = JSON.parse(
@@ -326,7 +325,7 @@ export default function Form() {
 
   test("should verify file transformation and import addition", async () => {
     // 测试文件转换是否正确添加了导入语句和I18n调用
-    fs.mkdirSync("test-src/components/Test", { recursive: true });
+    fs.mkdirSync(`${TEST_ROOT_DIR}/components/Test`, { recursive: true });
 
     const testFileContent = `
 import React from "react";
@@ -341,7 +340,7 @@ export default function Test() {
 }
 `;
 
-    fs.writeFileSync("test-src/components/Test/index.tsx", testFileContent);
+    fs.writeFileSync(`${TEST_ROOT_DIR}/components/Test/index.tsx`, testFileContent);
 
     // 运行扫描
     const scanner = new I18nScanner(testConfig);
@@ -349,7 +348,7 @@ export default function Test() {
 
     // 检查转换后的文件
     const transformedContent = fs.readFileSync(
-      "test-src/components/Test/index.tsx",
+      `${TEST_ROOT_DIR}/components/Test/index.tsx`,
       "utf-8"
     );
 

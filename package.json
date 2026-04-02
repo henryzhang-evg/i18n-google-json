@@ -1,12 +1,13 @@
 {
-  "name": "i18n-google",
-  "version": "0.3.3",
+  "name": "i18n-google-json",
+  "version": "0.3.5",
   "description": "I18n scanning system with Google Sheets integration",
   "main": "dist/scan.js",
   "bin": {
-    "i18n-google": "dist/scan.js"
+    "i18n-google-json": "bin/i18n-google-json.js"
   },
   "files": [
+    "bin/",
     "dist/",
     "README.md",
     "LICENSE"
@@ -22,14 +23,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/947776795/i18n-google.git"
+    "url": "git+https://github.com/947776795/i18n-google-json.git"
   },
   "bugs": {
-    "url": "https://github.com/947776795/i18n-google/issues"
+    "url": "https://github.com/947776795/i18n-google-json/issues"
   },
-  "homepage": "https://github.com/947776795/i18n-google#readme",
+  "homepage": "https://github.com/947776795/i18n-google-json#readme",
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rm -rf dist && tsc && chmod +x bin/i18n-google-json.js",
     "scan": "node dist/scan.js",
     "dev": "ts-node scan.ts",
     "test": "jest",
