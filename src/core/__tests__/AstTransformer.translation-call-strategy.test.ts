@@ -230,4 +230,73 @@ describe("AstTransformer - translation call strategy", () => {
       'ns: "onboarding.screens.Step2MarketsTopicsScreen"'
     );
   });
+
+  test("localeJsonKeyMode=namespaced 时自动开启代码 namespace 注入", () => {
+    const transformer = new AstTransformer({
+      ...baseConfig,
+      localeJsonKeyMode: "namespaced",
+      translationCallStrategy: {
+        component: {
+          enabled: true,
+          hookName: "useTranslation",
+          hookImportFrom: "react-i18next",
+          translatorName: "t",
+        },
+        module: {},
+      },
+    });
+    const source = `
+      function Step2MarketsTopicsScreen() {
+        return <h1>AI & Tech</h1>;
+      }
+    `;
+    const result = transformer.transformSource(
+      source,
+      "onboarding/screens/Step2MarketsTopicsScreen.tsx"
+    );
+    expect(result.transformedCode).toContain(
+      'useTranslation("onboarding.screens.Step2MarketsTopicsScreen")'
+    );
+  });
+
+  test("上提 useTranslation 时保留原解构字段（如 i18n）且补齐 namespace", () => {
+    const transformer = new AstTransformer({
+      ...baseConfig,
+      translationCallStrategy: {
+        component: {
+          enabled: true,
+          hookName: "useTranslation",
+          hookImportFrom: "react-i18next",
+          translatorName: "t",
+        },
+        module: {},
+        namespace: {
+          enabled: true,
+          shortKey: true,
+        },
+      },
+    });
+
+    const source = `
+      import { useTranslation } from "react-i18next";
+      function Step2MarketsTopicsScreen() {
+        const title = t("existing_key");
+        const { t, i18n } = useTranslation();
+        return <h1>{i18n.language}-{title}</h1>;
+      }
+    `;
+
+    const result = transformer.analyzeAndTransformSource(
+      source,
+      "onboarding/screens/Step2MarketsTopicsScreen.tsx"
+    );
+
+    expect(result.transformedCode).toContain(
+      'const { t, i18n } = useTranslation("onboarding.screens.Step2MarketsTopicsScreen")'
+    );
+    const useTranslationCalls =
+      (result.transformedCode.match(/useTranslation\s*\(/g) || []).length;
+    expect(useTranslationCalls).toBe(1);
+    expect(result.transformedCode).toContain("i18n.language");
+  });
 });

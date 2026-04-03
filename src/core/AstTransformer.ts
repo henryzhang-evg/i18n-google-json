@@ -977,7 +977,10 @@ export class AstTransformer {
   }
 
   private isNamespaceEnabled(): boolean {
-    return !!this.config.translationCallStrategy?.namespace?.enabled;
+    return (
+      this.config.translationCallStrategy?.namespace?.enabled === true ||
+      this.config.localeJsonKeyMode === "namespaced"
+    );
   }
 
   private generateTranslationKeyByStrategy(filePath: string, text: string): string {
@@ -1045,29 +1048,26 @@ export class AstTransformer {
         if (!this.hookInjectionTargets.has(path.node as any)) return;
         if (!n.BlockStatement.check(path.node.body)) return;
         const body = path.node.body.body;
-        // 将函数体中已有的 useTranslation t 声明上提到顶部，避免 t 在声明前使用
-        this.removeExistingTranslatorBindingsFromUseTranslation(
+        // 将函数体中已有的 useTranslation 声明上提到顶部，避免 t 在声明前使用
+        const extracted = this.extractTranslatorBindingFromUseTranslation(
           body,
           hookName,
           translatorName
         );
-        const shorthandProp = j.property(
-          "init",
-          j.identifier(translatorName),
-          j.identifier(translatorName)
-        ) as any;
-        shorthandProp.shorthand = true;
-        const hookArgs = this.isNamespaceEnabled()
-          ? [j.literal(this.getNamespaceForFile(filePath))]
-          : [];
-        const initStmt = j.variableDeclaration("const", [
-          j.variableDeclarator(
-            j.objectPattern([
-              shorthandProp,
-            ]),
-            j.callExpression(j.identifier(hookName), hookArgs as any)
-          ),
-        ]);
+        const initStmt = extracted
+          ? this.createMovedUseTranslationStatement(
+              j,
+              extracted.declarator,
+              extracted.kind,
+              hookName,
+              filePath
+            )
+          : this.createDefaultUseTranslationStatement(
+              j,
+              hookName,
+              translatorName,
+              filePath
+            );
         body.unshift(initStmt as any);
       });
   }
@@ -1090,65 +1090,33 @@ export class AstTransformer {
     root.find(j.Function).forEach((path: ASTPath<n.Function>) => {
       if (!n.BlockStatement.check(path.node.body)) return;
       const body = path.node.body.body;
-      const hasExisting = this.hasExistingTranslatorBindingFromUseTranslation(
+      const extracted = this.extractTranslatorBindingFromUseTranslation(
         body,
         hookName,
         translatorName
       );
-      if (!hasExisting) return;
-      this.removeExistingTranslatorBindingsFromUseTranslation(
-        body,
+      if (!extracted) return;
+      const initStmt = this.createMovedUseTranslationStatement(
+        j,
+        extracted.declarator,
+        extracted.kind,
         hookName,
-        translatorName
+        filePath
       );
-      const shorthandProp = j.property(
-        "init",
-        j.identifier(translatorName),
-        j.identifier(translatorName)
-      ) as any;
-      shorthandProp.shorthand = true;
-      const hookArgs = this.isNamespaceEnabled()
-        ? [j.literal(this.getNamespaceForFile(filePath))]
-        : [];
-      const initStmt = j.variableDeclaration("const", [
-        j.variableDeclarator(
-          j.objectPattern([
-            shorthandProp,
-          ]),
-          j.callExpression(j.identifier(hookName), hookArgs as any)
-        ),
-      ]);
       body.unshift(initStmt as any);
     });
   }
 
-  private hasExistingTranslatorBindingFromUseTranslation(
-    body: n.Statement[],
-    hookName: string,
-    translatorName: string
-  ): boolean {
-    return body.some((stmt) => {
-      if (!n.VariableDeclaration.check(stmt)) return false;
-      return stmt.declarations.some((decl) => {
-        if (!n.VariableDeclarator.check(decl)) return false;
-        if (!decl.init || !n.CallExpression.check(decl.init)) return false;
-        if (!n.Identifier.check(decl.init.callee) || decl.init.callee.name !== hookName)
-          return false;
-        if (!n.Pattern.check(decl.id)) return false;
-        return this.patternDeclaresBinding(decl.id, translatorName);
-      });
-    });
-  }
-
   /**
-   * 删除函数体中已有的 `const { t } = useTranslation()`（含 t 的解构），
-   * 由调用方统一在顶部重新注入，确保声明顺序正确。
+   * 提取函数体中已有的 useTranslation 声明（包含 translator 绑定），并从原位置移除。
+   * 若同函数中存在多处匹配，仅保留第一处用于上提，其余移除，避免重复声明。
    */
-  private removeExistingTranslatorBindingsFromUseTranslation(
+  private extractTranslatorBindingFromUseTranslation(
     body: n.Statement[],
     hookName: string,
     translatorName: string
-  ): void {
+  ): { declarator: n.VariableDeclarator; kind: "const" | "let" | "var" } | null {
+    let extracted: { declarator: n.VariableDeclarator; kind: "const" | "let" | "var" } | null = null;
     for (let i = body.length - 1; i >= 0; i--) {
       const stmt = body[i];
       if (!n.VariableDeclaration.check(stmt)) continue;
@@ -1175,6 +1143,9 @@ export class AstTransformer {
           retainedDecls.push(decl);
           continue;
         }
+        if (!extracted) {
+          extracted = { declarator: decl, kind: stmt.kind };
+        }
       }
       if (retainedDecls.length === 0) {
         body.splice(i, 1);
@@ -1182,6 +1153,51 @@ export class AstTransformer {
         stmt.declarations = retainedDecls;
       }
     }
+    return extracted;
+  }
+
+  private createDefaultUseTranslationStatement(
+    j: JSCodeshiftAPI,
+    hookName: string,
+    translatorName: string,
+    filePath: string
+  ): n.VariableDeclaration {
+    const shorthandProp = j.property(
+      "init",
+      j.identifier(translatorName),
+      j.identifier(translatorName)
+    ) as any;
+    shorthandProp.shorthand = true;
+    const hookArgs = this.isNamespaceEnabled()
+      ? [j.literal(this.getNamespaceForFile(filePath))]
+      : [];
+    return j.variableDeclaration("const", [
+      j.variableDeclarator(
+        j.objectPattern([shorthandProp]),
+        j.callExpression(j.identifier(hookName), hookArgs as any)
+      ),
+    ]);
+  }
+
+  private createMovedUseTranslationStatement(
+    j: JSCodeshiftAPI,
+    declarator: n.VariableDeclarator,
+    kind: "const" | "let" | "var",
+    hookName: string,
+    filePath: string
+  ): n.VariableDeclaration {
+    // namespace 模式下：已有 useTranslation() 无参数时自动补齐 namespace 参数
+    if (
+      this.isNamespaceEnabled() &&
+      declarator.init &&
+      n.CallExpression.check(declarator.init) &&
+      n.Identifier.check(declarator.init.callee) &&
+      declarator.init.callee.name === hookName &&
+      declarator.init.arguments.length === 0
+    ) {
+      declarator.init.arguments = [j.literal(this.getNamespaceForFile(filePath))];
+    }
+    return j.variableDeclaration(kind, [declarator]);
   }
 
   /**
